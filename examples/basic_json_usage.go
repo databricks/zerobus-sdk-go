@@ -46,15 +46,16 @@ func main() {
 	}
 	defer stream.Close()
 
-	// Ingest records
+	log.Println("Ingesting records (non-blocking)...")
 	for i := 0; i < 5; i++ {
+		// Change this string to match the schema of your table.
 		jsonRecord := `{
             "device_name": "sensor-001",
             "temp": 20,
             "humidity": 60
         }`
 
-		offset, err := stream.IngestRecord(jsonRecord)
+		_, err = stream.IngestRecord(jsonRecord)
 		if err != nil {
 			log.Printf("Failed to ingest record %d: %v", i, err)
 			// Check if error is retryable
@@ -64,7 +65,7 @@ func main() {
 			continue
 		}
 
-		log.Printf("Ingested record %d with offset %d", i, offset)
+		log.Printf("Queued record %d (awaiting acknowledgment...)", i)
 	}
 
 	// Flush to ensure all records are acknowledged

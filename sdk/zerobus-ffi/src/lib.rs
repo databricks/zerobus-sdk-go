@@ -1,8 +1,12 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::collections::HashMap;
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
+use tokio::task::JoinHandle;
 
 use databricks_zerobus_ingest_sdk::{
     ZerobusSdk, ZerobusStream, ZerobusError,
@@ -15,6 +19,11 @@ use prost::Message;
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
     Runtime::new().expect("Failed to create Tokio runtime")
 });
+
+// Global acknowledgment registry
+static ACK_COUNTER: AtomicU64 = AtomicU64::new(1);
+static ACK_REGISTRY: Lazy<Mutex<HashMap<u64, JoinHandle<Result<i64, ZerobusError>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Opaque types for Go
 #[repr(C)]
@@ -249,15 +258,16 @@ pub extern "C" fn zerobus_stream_free(stream: *mut CZerobusStream) {
     }
 }
 
-/// Ingest a record (protobuf encoded)
-/// Returns the offset ID on success, or -1 on error
+/// Ingest a record (protobuf encoded) - NON-BLOCKING
+/// Returns an acknowledgment ID that can be awaited later
+/// Returns 0 on error
 #[no_mangle]
 pub extern "C" fn zerobus_stream_ingest_proto_record(
     stream: *mut CZerobusStream,
     data: *const u8,
     data_len: usize,
     result: *mut CResult,
-) -> i64 {
+) -> u64 {
     if stream.is_null() || data.is_null() {
         if !result.is_null() {
             unsafe {
@@ -268,43 +278,53 @@ pub extern "C" fn zerobus_stream_ingest_proto_record(
                 };
             }
         }
-        return -1;
+        return 0;
     }
 
     let stream_ref = unsafe { &*(stream as *const ZerobusStream) };
     let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
     let data_vec = data_slice.to_vec();
 
-    let res = RUNTIME.block_on(async {
+    // Queue the record and get the acknowledgment future
+    let ack_future_res = RUNTIME.block_on(async {
         let payload = RecordPayload::Proto(data_vec);
-        let ack_future = stream_ref.ingest_record(payload).await?;
-        let offset = ack_future.await?;
-        Ok::<i64, ZerobusError>(offset)
+        stream_ref.ingest_record(payload).await
     });
 
-    match res {
-        Ok(offset) => {
+    match ack_future_res {
+        Ok(ack_future) => {
+            // Spawn a task to await the acknowledgment
+            let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let handle = RUNTIME.spawn(async move {
+                ack_future.await
+            });
+
+            // Store the handle
+            ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
+
             if !result.is_null() {
                 unsafe { *result = CResult::success(); }
             }
-            offset
+            ack_id
         }
         Err(err) => {
             if !result.is_null() {
                 unsafe { *result = CResult::error(err); }
             }
-            -1
+            0
         }
     }
 }
 
-/// Ingest a JSON record
+/// Ingest a JSON record - NON-BLOCKING
+/// Returns an acknowledgment ID that can be awaited later
+/// Returns 0 on error
 #[no_mangle]
 pub extern "C" fn zerobus_stream_ingest_json_record(
     stream: *mut CZerobusStream,
     json_data: *const c_char,
     result: *mut CResult,
-) -> i64 {
+) -> u64 {
     if stream.is_null() || json_data.is_null() {
         if !result.is_null() {
             unsafe {
@@ -315,42 +335,192 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
                 };
             }
         }
-        return -1;
+        return 0;
     }
 
     let stream_ref = unsafe { &*(stream as *const ZerobusStream) };
-
-    let res = (|| -> Result<i64, String> {
-        let json_str = unsafe { c_str_to_string(json_data).map_err(|e| e.to_string())? };
-
-        RUNTIME.block_on(async {
-            let payload = RecordPayload::Json(json_str);
-            let ack_future = stream_ref.ingest_record(payload).await.map_err(|e| e.to_string())?;
-            let offset = ack_future.await.map_err(|e| e.to_string())?;
-            Ok(offset)
-        })
-    })();
-
-    match res {
-        Ok(offset) => {
+    let json_str = match unsafe { c_str_to_string(json_data) } {
+        Ok(s) => s,
+        Err(e) => {
             if !result.is_null() {
-                unsafe { *result = CResult::success(); }
-            }
-            offset
-        }
-        Err(err) => {
-            if !result.is_null() {
-                let err_msg = CString::new(err).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
                 unsafe {
                     *result = CResult {
                         success: false,
-                        error_message: err_msg.into_raw(),
+                        error_message: CString::new(e).unwrap().into_raw(),
+                        is_retryable: false,
+                    };
+                }
+            }
+            return 0;
+        }
+    };
+
+    // Queue the record and get the acknowledgment future
+    let ack_future_res = RUNTIME.block_on(async {
+        let payload = RecordPayload::Json(json_str);
+        stream_ref.ingest_record(payload).await
+    });
+
+    match ack_future_res {
+        Ok(ack_future) => {
+            // Spawn a task to await the acknowledgment
+            let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let handle = RUNTIME.spawn(async move {
+                ack_future.await
+            });
+
+            // Store the handle
+            ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
+
+            if !result.is_null() {
+                unsafe { *result = CResult::success(); }
+            }
+            ack_id
+        }
+        Err(err) => {
+            if !result.is_null() {
+                unsafe { *result = CResult::error(err); }
+            }
+            0
+        }
+    }
+}
+
+/// Await an acknowledgment (BLOCKING)
+/// Returns the offset on success, or -1 on error
+#[no_mangle]
+pub extern "C" fn zerobus_stream_await_ack(
+    ack_id: u64,
+    result: *mut CResult,
+) -> i64 {
+    // Remove the handle from the registry
+    let handle = {
+        let mut registry = ACK_REGISTRY.lock().unwrap();
+        registry.remove(&ack_id)
+    };
+
+    match handle {
+        Some(h) => {
+            // Wait for the acknowledgment
+            let res = RUNTIME.block_on(h);
+
+            match res {
+                Ok(Ok(offset)) => {
+                    if !result.is_null() {
+                        unsafe { *result = CResult::success(); }
+                    }
+                    offset
+                }
+                Ok(Err(err)) => {
+                    if !result.is_null() {
+                        unsafe { *result = CResult::error(err); }
+                    }
+                    -1
+                }
+                Err(_) => {
+                    if !result.is_null() {
+                        unsafe {
+                            *result = CResult {
+                                success: false,
+                                error_message: CString::new("Task panicked").unwrap().into_raw(),
+                                is_retryable: false,
+                            };
+                        }
+                    }
+                    -1
+                }
+            }
+        }
+        None => {
+            if !result.is_null() {
+                unsafe {
+                    *result = CResult {
+                        success: false,
+                        error_message: CString::new("Invalid ack ID").unwrap().into_raw(),
                         is_retryable: false,
                     };
                 }
             }
             -1
         }
+    }
+}
+
+/// Try to get an acknowledgment without blocking
+/// Returns:
+///   offset >= 0: Acknowledgment ready with offset
+///   -1: Still pending (check is_ready)
+///   -2: Error occurred (check result)
+#[no_mangle]
+pub extern "C" fn zerobus_stream_try_get_ack(
+    ack_id: u64,
+    is_ready: *mut bool,
+    result: *mut CResult,
+) -> i64 {
+    let registry = ACK_REGISTRY.lock().unwrap();
+
+    if let Some(handle) = registry.get(&ack_id) {
+        if handle.is_finished() {
+            drop(registry);
+            // Remove and get the result
+            let handle = ACK_REGISTRY.lock().unwrap().remove(&ack_id).unwrap();
+            let res = RUNTIME.block_on(handle);
+
+            if !is_ready.is_null() {
+                unsafe { *is_ready = true; }
+            }
+
+            match res {
+                Ok(Ok(offset)) => {
+                    if !result.is_null() {
+                        unsafe { *result = CResult::success(); }
+                    }
+                    offset
+                }
+                Ok(Err(err)) => {
+                    if !result.is_null() {
+                        unsafe { *result = CResult::error(err); }
+                    }
+                    -2
+                }
+                Err(_) => {
+                    if !result.is_null() {
+                        unsafe {
+                            *result = CResult {
+                                success: false,
+                                error_message: CString::new("Task panicked").unwrap().into_raw(),
+                                is_retryable: false,
+                            };
+                        }
+                    }
+                    -2
+                }
+            }
+        } else {
+            // Still pending
+            if !is_ready.is_null() {
+                unsafe { *is_ready = false; }
+            }
+            if !result.is_null() {
+                unsafe { *result = CResult::success(); }
+            }
+            -1
+        }
+    } else {
+        // Invalid ID
+        if !is_ready.is_null() {
+            unsafe { *is_ready = false; }
+        }
+        if !result.is_null() {
+            unsafe {
+                *result = CResult {
+                    success: false,
+                    error_message: CString::new("Invalid ack ID").unwrap().into_raw(),
+                    is_retryable: false,
+                };
+            }
+        }
+        -2
     }
 }
 

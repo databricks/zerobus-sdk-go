@@ -1,8 +1,8 @@
 package zerobus
 
-// #cgo linux LDFLAGS: -L${SRCDIR}/.. -lzerobus_ffi -ldl -lpthread -lm -lresolv
-// #cgo darwin LDFLAGS: -L${SRCDIR}/.. -lzerobus_ffi -framework CoreFoundation
-// #cgo CFLAGS: -I${SRCDIR}/zerobus-ffi
+// #cgo linux LDFLAGS: ${SRCDIR}/../libzerobus_ffi.a -ldl -lpthread -lm -lresolv -lgcc_s
+// #cgo darwin LDFLAGS: ${SRCDIR}/../libzerobus_ffi.a -framework CoreFoundation -framework Security -liconv
+// #cgo CFLAGS: -I${SRCDIR}/zerobus-ffi -Wno-implicit-function-declaration
 // #include "zerobus.h"
 // #include <stdlib.h>
 import "C"
@@ -127,20 +127,56 @@ func streamFree(ptr unsafe.Pointer) {
 	}
 }
 
-// streamIngestProtoRecord ingests a protobuf record
-func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (int64, error) {
+// streamIngestProtoRecord ingests a protobuf record (NON-BLOCKING)
+// Returns an acknowledgment ID
+func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (uint64, error) {
 	if len(data) == 0 {
-		return -1, &ZerobusError{Message: "empty data", IsRetryable: false}
+		return 0, &ZerobusError{Message: "empty data", IsRetryable: false}
 	}
 
 	cData := (*C.uint8_t)(unsafe.Pointer(&data[0]))
 	dataLen := C.size_t(len(data))
 
 	var cres C.CResult
-	offset := C.zerobus_stream_ingest_proto_record(
+	ackID := C.zerobus_stream_ingest_proto_record(
 		(*C.CZerobusStream)(streamPtr),
 		cData,
 		dataLen,
+		&cres,
+	)
+
+	if ackID == 0 {
+		return 0, ffiResult(cres)
+	}
+
+	return uint64(ackID), nil
+}
+
+// streamIngestJSONRecord ingests a JSON record (NON-BLOCKING)
+// Returns an acknowledgment ID
+func streamIngestJSONRecord(streamPtr unsafe.Pointer, jsonData string) (uint64, error) {
+	cJSON := C.CString(jsonData)
+	defer C.free(unsafe.Pointer(cJSON))
+
+	var cres C.CResult
+	ackID := C.zerobus_stream_ingest_json_record(
+		(*C.CZerobusStream)(streamPtr),
+		cJSON,
+		&cres,
+	)
+
+	if ackID == 0 {
+		return 0, ffiResult(cres)
+	}
+
+	return uint64(ackID), nil
+}
+
+// streamAwaitAck waits for an acknowledgment and returns the offset
+func streamAwaitAck(ackID uint64) (int64, error) {
+	var cres C.CResult
+	offset := C.zerobus_stream_await_ack(
+		C.uint64_t(ackID),
 		&cres,
 	)
 
@@ -151,23 +187,29 @@ func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (int64, erro
 	return int64(offset), nil
 }
 
-// streamIngestJSONRecord ingests a JSON record
-func streamIngestJSONRecord(streamPtr unsafe.Pointer, jsonData string) (int64, error) {
-	cJSON := C.CString(jsonData)
-	defer C.free(unsafe.Pointer(cJSON))
-
+// streamTryGetAck tries to get an acknowledgment without blocking
+func streamTryGetAck(ackID uint64) (int64, error, bool) {
 	var cres C.CResult
-	offset := C.zerobus_stream_ingest_json_record(
-		(*C.CZerobusStream)(streamPtr),
-		cJSON,
+	var isReady C.bool
+
+	offset := C.zerobus_stream_try_get_ack(
+		C.uint64_t(ackID),
+		&isReady,
 		&cres,
 	)
 
-	if offset < 0 {
-		return -1, ffiResult(cres)
+	if offset == -1 {
+		// Still pending
+		return 0, nil, false
 	}
 
-	return int64(offset), nil
+	if offset == -2 {
+		// Error occurred
+		return 0, ffiResult(cres), true
+	}
+
+	// Success
+	return int64(offset), nil, true
 }
 
 // streamFlush flushes pending records

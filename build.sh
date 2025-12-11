@@ -15,23 +15,10 @@ echo ""
 echo "Step 2: Copying artifacts..."
 cd ..
 
-# Detect platform and copy the correct library
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    cp zerobus-ffi/target/release/libzerobus_ffi.dylib .
-    cp zerobus-ffi/target/release/libzerobus_ffi.dylib ..
-    echo "✓ Copied libzerobus_ffi.dylib to sdk/ and repository root (macOS)"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    # Linux
-    cp zerobus-ffi/target/release/libzerobus_ffi.so .
-    cp zerobus-ffi/target/release/libzerobus_ffi.so ..
-    echo "✓ Copied libzerobus_ffi.so to sdk/ and repository root (Linux)"
-else
-    echo "⚠ Unknown platform: $OSTYPE"
-    echo "Attempting to copy .so file..."
-    cp zerobus-ffi/target/release/libzerobus_ffi.so .
-    cp zerobus-ffi/target/release/libzerobus_ffi.so ..
-fi
+# Copy static library (same for all platforms)
+cp zerobus-ffi/target/release/libzerobus_ffi.a .
+cp zerobus-ffi/target/release/libzerobus_ffi.a ..
+echo "✓ Copied libzerobus_ffi.a to sdk/ and repository root"
 
 # Note: zerobus.h is now referenced from zerobus-ffi/ directly (no copy needed)
 echo "✓ Artifacts copied"
@@ -61,19 +48,10 @@ echo "========================================="
 echo "Build completed successfully!"
 echo "========================================="
 echo ""
-
-# Platform-specific instructions
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "Library location: $(pwd)/libzerobus_ffi.dylib"
-    echo ""
-    echo "To use the SDK:"
-    echo "  export DYLD_LIBRARY_PATH=$(pwd):\$DYLD_LIBRARY_PATH"
-else
-    echo "Library location: $(pwd)/libzerobus_ffi.so"
-    echo ""
-    echo "To use the SDK:"
-    echo "  export LD_LIBRARY_PATH=$(pwd):\$LD_LIBRARY_PATH"
-fi
+echo "Library location: $(pwd)/libzerobus_ffi.a"
+echo ""
+echo "✓ Static library built - no runtime dependencies needed!"
+echo "  The Go binary will be self-contained with no LD_LIBRARY_PATH setup required."
 echo ""
 echo "To run examples:"
 echo "  cd examples"

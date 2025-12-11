@@ -79,20 +79,38 @@ struct CZerobusStream *zerobus_sdk_create_stream(struct CZerobusSdk *sdk,
 void zerobus_stream_free(struct CZerobusStream *stream);
 
 /**
- * Ingest a record (protobuf encoded)
- * Returns the offset ID on success, or -1 on error
+ * Ingest a record (protobuf encoded) - NON-BLOCKING
+ * Returns an acknowledgment ID that can be awaited later
+ * Returns 0 on error
  */
-int64_t zerobus_stream_ingest_proto_record(struct CZerobusStream *stream,
-                                           const uint8_t *data,
-                                           uintptr_t data_len,
+uint64_t zerobus_stream_ingest_proto_record(struct CZerobusStream *stream,
+                                            const uint8_t *data,
+                                            uintptr_t data_len,
+                                            struct CResult *result);
+
+/**
+ * Ingest a JSON record - NON-BLOCKING
+ * Returns an acknowledgment ID that can be awaited later
+ * Returns 0 on error
+ */
+uint64_t zerobus_stream_ingest_json_record(struct CZerobusStream *stream,
+                                           const char *json_data,
                                            struct CResult *result);
 
 /**
- * Ingest a JSON record
+ * Await an acknowledgment (BLOCKING)
+ * Returns the offset on success, or -1 on error
  */
-int64_t zerobus_stream_ingest_json_record(struct CZerobusStream *stream,
-                                          const char *json_data,
-                                          struct CResult *result);
+int64_t zerobus_stream_await_ack(uint64_t ack_id, struct CResult *result);
+
+/**
+ * Try to get an acknowledgment without blocking
+ * Returns:
+ *   offset >= 0: Acknowledgment ready with offset
+ *   -1: Still pending (check is_ready)
+ *   -2: Error occurred (check result)
+ */
+int64_t zerobus_stream_try_get_ack(uint64_t ack_id, bool *is_ready, struct CResult *result);
 
 /**
  * Flush all pending records

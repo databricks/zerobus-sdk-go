@@ -45,41 +45,32 @@ cp sdk/zerobus-ffi/zerobus.h "${RELEASE_DIR}/sdk/zerobus-ffi/"
 cp README.md "${RELEASE_DIR}/"
 cp -r examples "${RELEASE_DIR}/"
 
-# Copy platform-specific library to release root (needed for linking)
-if [ "$OS" = "darwin" ]; then
-    cp sdk/zerobus-ffi/target/release/libzerobus_ffi.dylib "${RELEASE_DIR}/"
-    echo "✓ Copied libzerobus_ffi.dylib (macOS)"
-else
-    cp sdk/zerobus-ffi/target/release/libzerobus_ffi.so "${RELEASE_DIR}/"
-    echo "✓ Copied libzerobus_ffi.so (Linux)"
-fi
+# Copy static library to release root (needed for linking)
+cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a "${RELEASE_DIR}/"
+echo "✓ Copied libzerobus_ffi.a (static library)"
 
-# Create setup script
-cat > "${RELEASE_DIR}/setup.sh" << 'EOF'
+# Create quick start script
+cat > "${RELEASE_DIR}/quickstart.sh" << 'EOF'
 #!/bin/bash
-# Source this file to set up the environment:
-#   source setup.sh
-
-SDK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Set library path based on OS
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    export DYLD_LIBRARY_PATH="${SDK_DIR}:${DYLD_LIBRARY_PATH}"
-    echo "✓ Set DYLD_LIBRARY_PATH=${SDK_DIR}"
-else
-    export LD_LIBRARY_PATH="${SDK_DIR}:${LD_LIBRARY_PATH}"
-    echo "✓ Set LD_LIBRARY_PATH=${SDK_DIR}"
-fi
-
+echo "Zerobus Go SDK - Quick Start"
 echo ""
-echo "Zerobus Go SDK environment configured!"
+echo "The SDK uses static linking - no library path configuration needed!"
 echo ""
 echo "Next steps:"
-echo "  1. Set your Databricks credentials (see INSTALL.md)"
-echo "  2. cd examples && go run basic_json_usage.go"
+echo "  1. Set your Databricks credentials:"
+echo "     export ZEROBUS_SERVER_ENDPOINT=\"https://your-zerobus-endpoint.databricks.com\""
+echo "     export DATABRICKS_WORKSPACE_URL=\"https://your-workspace.databricks.com\""
+echo "     export DATABRICKS_CLIENT_ID=\"your-client-id\""
+echo "     export DATABRICKS_CLIENT_SECRET=\"your-client-secret\""
+echo "     export ZEROBUS_TABLE_NAME=\"catalog.schema.table\""
+echo ""
+echo "  2. Run an example:"
+echo "     cd examples && go run basic_json_usage.go"
+echo ""
+echo "  3. For detailed usage, see INSTALL.md"
 echo ""
 EOF
-chmod +x "${RELEASE_DIR}/setup.sh"
+chmod +x "${RELEASE_DIR}/quickstart.sh"
 
 # Create installation instructions
 cat > "${RELEASE_DIR}/INSTALL.md" << 'EOF'
@@ -93,24 +84,7 @@ cat > "${RELEASE_DIR}/INSTALL.md" << 'EOF'
    cd zerobus-go-sdk-*
    ```
 
-2. Set up the environment (easy way):
-   ```bash
-   source setup.sh
-   ```
-
-   This automatically sets the library path for you!
-
-   **Or manually:**
-
-   **macOS:**
-   ```bash
-   export DYLD_LIBRARY_PATH=$(pwd):$DYLD_LIBRARY_PATH
-   ```
-
-   **Linux:**
-   ```bash
-   export LD_LIBRARY_PATH=$(pwd):$LD_LIBRARY_PATH
-   ```
+2. **That's it!** The SDK uses static linking, no library path configuration needed.
 
 3. Set your credentials and run:
    ```bash
@@ -123,6 +97,10 @@ cat > "${RELEASE_DIR}/INSTALL.md" << 'EOF'
    cd examples
    go run basic_json_usage.go
    ```
+
+## Why No Setup Script?
+
+This SDK uses **static linking**, which means the Rust library is compiled directly into your Go binary.
 
 ## Using in Your Go Project
 
@@ -140,7 +118,7 @@ go mod init mycompany.com/my-app
 require github.com/databricks/zerobus-go-sdk v0.1.0
 
 // Point to the extracted SDK directory
-replace github.com/databricks/zerobus-go-sdk => /path/to/zerobus-go-sdk-darwin-arm64-v0.1.0/sdk
+replace github.com/databricks/zerobus-go-sdk => /path/to/zerobus-go-sdk-linux-amd64-v0.1.0/sdk
 ```
 
 **Note:** Update the path to point to where you extracted this SDK (include the /sdk subdirectory).
@@ -152,13 +130,13 @@ import zerobus "github.com/databricks/zerobus-go-sdk"
 sdk, err := zerobus.NewZerobusSdk(endpoint, catalogURL)
 ```
 
-### Step 4: Set Library Path
-Before running your app, you must source the setup script:
+### Step 4: Build and Run
 ```bash
-source /path/to/zerobus-go-sdk-darwin-arm64-v0.1.0/setup.sh
+go build -o my-app
+./my-app
 ```
 
-This sets the library path so your app can find `libzerobus_ffi.dylib` (or `.so`).
+**That's it!** The binary includes everything it needs and can be deployed anywhere.
 
 ## Running Examples
 
@@ -169,22 +147,8 @@ export DATABRICKS_WORKSPACE_URL="https://your-workspace.databricks.com"
 export DATABRICKS_CLIENT_ID="your-client-id"
 export DATABRICKS_CLIENT_SECRET="your-client-secret"
 export ZEROBUS_TABLE_NAME="catalog.schema.table"
+# Change the json string inside basic_json_usage.go to match the schema of your table
 go run basic_json_usage.go
-```
-
-## System-Wide Installation (Optional)
-
-To install the library system-wide:
-
-**macOS:**
-```bash
-sudo cp libzerobus_ffi.dylib /usr/local/lib/
-```
-
-**Linux:**
-```bash
-sudo cp libzerobus_ffi.so /usr/local/lib/
-sudo ldconfig
 ```
 EOF
 
@@ -194,16 +158,23 @@ cd releases
 tar -czf "${RELEASE_NAME}.tar.gz" "${RELEASE_NAME}"
 cd ..
 
+echo "Creating zip..."
+cd releases
+zip -r -q "${RELEASE_NAME}.zip" "${RELEASE_NAME}"
+cd ..
+
 echo ""
 echo "========================================="
-echo "✓ Release package created successfully!"
+echo "✓ Release package created successfully"
 echo "========================================="
 echo ""
 echo "Package: releases/${RELEASE_NAME}.tar.gz"
 echo "Size: $(du -h releases/${RELEASE_NAME}.tar.gz | cut -f1)"
 echo ""
+echo ""
 echo "Users can:"
 echo "  1. Download ${RELEASE_NAME}.tar.gz"
 echo "  2. Extract: tar -xzf ${RELEASE_NAME}.tar.gz"
-echo "  3. Follow INSTALL.md instructions"
+echo "  3. Run: ./quickstart.sh"
+echo "  4. Start coding - no setup required!"
 echo ""

@@ -1,21 +1,57 @@
 # Zerobus Go SDK
 
-A Go wrapper for the Databricks Zerobus streaming ingestion SDK. This SDK provides a high-performance interface for ingesting data into Databricks Delta tables using the Zerobus service.
+A high-performance Go client for streaming data ingestion into Databricks Delta tables using the Zerobus service.
+
+## Disclaimer
+
+[Public Preview](https://docs.databricks.com/release-notes/release-types.html): This SDK is supported for production use cases and is available to all customers. Databricks is actively working on stabilizing the Zerobus Ingest SDK for Go. Minor version updates may include backwards-incompatible changes.
+
+We are keen to hear feedback from you on this SDK. Please [file issues](https://github.com/databricks/zerobus-go-sdk/issues), and we will address them.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Repository Structure](#repository-structure)
+- [Usage Guide](#usage-guide)
+  - [1. Initialize the SDK](#1-initialize-the-sdk)
+  - [2. Configure Authentication](#2-configure-authentication)
+  - [3. Create a Stream](#3-create-a-stream)
+  - [4. Ingest Data](#4-ingest-data)
+  - [5. Handle Acknowledgments](#5-handle-acknowledgments)
+  - [6. Close the Stream](#6-close-the-stream)
+- [Configuration Options](#configuration-options)
+- [Error Handling](#error-handling)
+- [Examples](#examples)
+- [Best Practices](#best-practices)
+- [API Reference](#api-reference)
+- [Building from Source](#building-from-source)
+- [Community and Contributing](#community-and-contributing)
+- [License](#license)
 
 ## Overview
 
-This Go SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobus-sdk-rs) using CGO and FFI (Foreign Function Interface). It provides an idiomatic Go API while leveraging the performance and reliability of the underlying Rust implementation.
+The Zerobus Go SDK provides a robust, CGO-based wrapper around the high-performance Rust implementation for ingesting large volumes of data into Databricks Delta tables. It abstracts the complexity of the Zerobus service and handles authentication, retries, stream recovery, and acknowledgment tracking automatically.
+
+**What is Zerobus?** Zerobus is a high-throughput streaming service for direct data ingestion into Databricks Delta tables, optimized for real-time data pipelines and high-volume workloads.
+
+This SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobus-sdk-rs) using CGO and FFI (Foreign Function Interface), providing an idiomatic Go API while leveraging the performance and reliability of the underlying Rust implementation.
 
 ## Features
 
+- **Static Linking** - Self-contained binaries with no runtime dependencies or LD_LIBRARY_PATH configuration
 - **High-throughput streaming ingestion** into Databricks Delta tables
 - **Automatic OAuth 2.0 authentication** with Unity Catalog
-- **Simple JSON ingestion** - No code generation required!
+- **Simple JSON ingestion** - No code generation required for basic use cases
+- **Protocol Buffers support** for type-safe, efficient data encoding
 - **Backpressure control** to manage memory usage
 - **Automatic retry and recovery** for transient failures
-- **Protocol Buffers support** for advanced use cases
-- **Async acknowledgments** for ingested records
 - **Configurable timeouts and retry policies**
+- **Async acknowledgments** for ingested records
+- **Graceful stream management** - Proper flushing and acknowledgment tracking
 
 ## Architecture
 
@@ -24,50 +60,55 @@ This Go SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobu
 │   Go SDK        │  ← Idiomatic Go API (this package)
 │   (zerobus)     │
 └────────┬────────┘
-         │ CGO
+         │ CGO (Static Linking)
 ┌────────▼────────┐
 │  Rust FFI Crate │  ← C-compatible wrapper
 │ (zerobus-ffi)   │
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Rust SDK       │  ← Core implementation
-│(zerobus-sdk-rs) │
-└─────────────────┘
+│  Rust SDK       │  ← Core async implementation (Tokio)
+│(zerobus-sdk-rs) │     - gRPC bidirectional streaming
+└────────┬────────┘     - OAuth 2.0 authentication
+         │              - Automatic recovery
+         ▼
+   Databricks
+ Zerobus Service
 ```
 
-## Prerequisites
+## Installation
+
+### Prerequisites
 
 - **Go 1.19+**
 - **CGO enabled** (required for calling Rust code)
-- **Rust toolchain** (for building the FFI layer)
-- The **libzerobus_ffi.so** shared library (built from `zerobus-ffi` crate)
+- **Rust toolchain** (for building from source)
 
-## Installation
-
-## Building from Source
+### Building from Source
 
 ```bash
 # Clone and build
-git clone <repository>
+git clone https://github.com/databricks/zerobus-go-sdk.git
 cd zerobus-go-sdk
-./build.sh
-
-# Set library path
-source setup.sh  # Created by build.sh
+make build
 ```
 
-## Installation
+**That's it!** The SDK uses static linking - your Go binaries will be self-contained with no runtime dependencies to configure.
 
-This SDK is distributed as platform-specific release packages (`.tar.gz` files).
+### Using in Your Project
 
-**For end users:** See `INSTALL.md` in the release package for setup instructions.
+Add the SDK to your `go.mod`:
 
-**For developers:** Clone this repository and run `./build.sh`
+```go
+require github.com/databricks/zerobus-go-sdk v0.1.0
+
+// For local development, use a replace directive
+replace github.com/databricks/zerobus-go-sdk => /path/to/zerobus-go-sdk/sdk
+```
 
 ## Quick Start
 
-### JSON Ingestion (Recommended)
+### JSON Ingestion (Recommended for Getting Started)
 
 ```go
 package main
@@ -80,8 +121,8 @@ import (
 func main() {
     // Create SDK instance
     sdk, err := zerobus.NewZerobusSdk(
-        "https://zerobus.databricks.com",
-        "https://workspace.databricks.com",
+        "https://your-shard-id.zerobus.region.cloud.databricks.com",
+        "https://your-workspace.cloud.databricks.com",
     )
     if err != nil {
         log.Fatal(err)
@@ -106,8 +147,14 @@ func main() {
     }
     defer stream.Close()
 
-    // Ingest records
-    offset, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
+    // Ingest records asynchronously (non-blocking)
+    ack, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Await acknowledgment to get offset
+    offset, err := ack.Await()
     if err != nil {
         log.Fatal(err)
     }
@@ -120,7 +167,7 @@ func main() {
 }
 ```
 
-### Protocol Buffer Ingestion
+### Protocol Buffer Ingestion (Recommended for Production)
 
 ```go
 import (
@@ -128,22 +175,20 @@ import (
     "google.golang.org/protobuf/types/descriptorpb"
 )
 
-// Create protobuf descriptor
-descriptor := &descriptorpb.DescriptorProto{
-    Name: proto.String("MyMessage"),
-    Field: []*descriptorpb.FieldDescriptorProto{
-        {
-            Name:   proto.String("id"),
-            Number: proto.Int32(1),
-            Type:   descriptorpb.FieldDescriptorProto_TYPE_INT64.Enum(),
-        },
-    },
+// Load descriptor from generated files
+descriptorBytes, err := os.ReadFile("path/to/schema.descriptor")
+if err != nil {
+    log.Fatal(err)
 }
-descriptorBytes, _ := proto.Marshal(descriptor)
+
+descriptor := &descriptorpb.DescriptorProto{}
+if err := proto.Unmarshal(descriptorBytes, descriptor); err != nil {
+    log.Fatal(err)
+}
 
 // Create stream for Proto records
 options := zerobus.DefaultStreamConfigurationOptions()
-options.UseJSONRecordType = false // Default
+options.RecordType = zerobus.RecordTypeProto
 
 stream, err := sdk.CreateStream(
     zerobus.TableProperties{
@@ -155,15 +200,315 @@ stream, err := sdk.CreateStream(
     options,
 )
 
-// Ingest proto-encoded records
-offset, err := stream.IngestProtoRecord(protoBytes)
+// Ingest proto-encoded records ([]byte) - non-blocking
+ack, err := stream.IngestRecord(protoBytes)
+
+// Await acknowledgment to get offset
+offset, err := ack.Await()
 ```
+
+## Repository Structure
+
+```
+zerobus-go-sdk/
+├── sdk/                            # Core SDK library
+│   ├── zerobus.go                  # Main SDK and stream implementation
+│   ├── ffi.go                      # CGO bindings to Rust FFI
+│   ├── errors.go                   # Error types
+│   ├── go.mod                      # Go module definition
+│   └── zerobus-ffi/                # Rust FFI crate
+│       ├── src/lib.rs              # FFI wrapper implementation
+│       ├── zerobus.h               # C header for CGO
+│       ├── Cargo.toml              # Rust dependencies
+│       └── build.rs                # Build script for cbindgen
+│
+├── examples/                       # Working examples
+│   ├── basic_json_usage.go         # JSON-based example
+│   └── basic_proto_usage.go        # Protocol Buffers example
+│
+├── tests/                          # Test suite
+│   └── README.md                   # Testing documentation
+│
+├── build.sh                        # Development build script
+├── build_release.sh                # Release packaging script
+├── Makefile                        # Build automation
+├── README.md                       # This file
+├── CHANGELOG.md                    # Version history
+├── CONTRIBUTING.md                 # Contribution guidelines
+├── SECURITY.md                     # Security policy
+├── DCO                             # Developer Certificate of Origin
+├── NOTICE                          # Third-party attribution
+└── LICENSE                         # License file
+```
+
+### Key Components
+
+- **`sdk/`** - The main library containing Go SDK and Rust FFI wrapper
+- **`examples/`** - Complete working examples demonstrating SDK usage
+- **`tests/`** - Integration and unit tests
+- **`build.sh`** - Automated build script for development
+- **`Makefile`** - Standard make targets for building, testing, and linting
+
+## Usage Guide
+
+### 1. Initialize the SDK
+
+Create an SDK instance with your Databricks workspace endpoints:
+
+```go
+// For AWS
+sdk, err := zerobus.NewZerobusSdk(
+    "https://your-shard-id.zerobus.us-east-1.cloud.databricks.com",
+    "https://your-workspace.cloud.databricks.com",
+)
+
+// For Azure
+sdk, err := zerobus.NewZerobusSdk(
+    "https://your-shard-id.zerobus.eastus.azuredatabricks.net",
+    "https://your-workspace.azuredatabricks.net",
+)
+
+if err != nil {
+    log.Fatal(err)
+}
+defer sdk.Free()
+```
+
+### 2. Configure Authentication
+
+The SDK handles authentication automatically. You just need to provide your OAuth credentials:
+
+```go
+clientID := os.Getenv("DATABRICKS_CLIENT_ID")
+clientSecret := os.Getenv("DATABRICKS_CLIENT_SECRET")
+```
+
+See the examples directory for how to obtain OAuth credentials.
+
+### 3. Create a Stream
+
+Configure table properties and stream options:
+
+```go
+options := zerobus.DefaultStreamConfigurationOptions()
+options.MaxInflightRecords = 10000
+options.Recovery = true
+options.RecoveryRetries = 4
+options.RecordType = zerobus.RecordTypeJson
+
+stream, err := sdk.CreateStream(
+    zerobus.TableProperties{
+        TableName: "catalog.schema.table",
+    },
+    clientID,
+    clientSecret,
+    options,
+)
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+```
+
+### 4. Ingest Data
+
+**Single record:**
+
+```go
+// JSON (string) - non-blocking
+ack, err := stream.IngestRecord(`{"id": 1, "value": "hello"}`)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Await acknowledgment
+offset, err := ack.Await()
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Record ingested at offset: %d", offset)
+```
+
+**Batch ingestion for high throughput (async pattern):**
+
+```go
+// Fire off all records without blocking
+acks := make([]*zerobus.RecordAck, 0, 100000)
+for i := 0; i < 100000; i++ {
+    jsonData := fmt.Sprintf(`{"id": %d, "timestamp": %d}`, i, time.Now().Unix())
+    ack, err := stream.IngestRecord(jsonData)
+    if err != nil {
+        log.Fatal(err)
+    }
+    acks = append(acks, ack)
+}
+
+// Optionally await specific acknowledgments
+// (or use stream.Flush() to wait for all)
+for i, ack := range acks {
+    if _, err := ack.Await(); err != nil {
+        log.Printf("Record %d failed: %v", i, err)
+    }
+}
+```
+
+**Concurrent ingestion with goroutines:**
+
+```go
+var wg sync.WaitGroup
+for partition := 0; partition < 4; partition++ {
+    wg.Add(1)
+    go func(p int) {
+        defer wg.Done()
+
+        // Each goroutine gets its own stream
+        stream, err := sdk.CreateStream(tableProps, clientID, clientSecret, options)
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer stream.Close()
+
+        for i := p * 25000; i < (p+1)*25000; i++ {
+            data := fmt.Sprintf(`{"id": %d}`, i)
+            // Fire off records asynchronously
+            if _, err := stream.IngestRecord(data); err != nil {
+                log.Fatal(err)
+            }
+            // Note: stream.Close() will flush and await all pending acks
+        }
+    }(partition)
+}
+wg.Wait()
+```
+
+### 5. Handle Acknowledgments
+
+The `IngestRecord` method returns the offset immediately:
+
+```go
+offset, err := stream.IngestRecord(data)
+if err != nil {
+    // Handle ingestion error
+    if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
+        if zerobusErr.Retryable() {
+            // Retry logic for transient failures
+        }
+    }
+    log.Fatal(err)
+}
+
+// Offset is available immediately
+log.Printf("Record committed at offset: %d", offset)
+```
+
+### 6. Close the Stream
+
+Always close streams to ensure data is flushed:
+
+```go
+// Close gracefully (flushes automatically)
+if err := stream.Close(); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Configuration Options
+
+### StreamConfigurationOptions
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `MaxInflightRecords` | `uint64` | 1,000,000 | Maximum unacknowledged records in flight |
+| `Recovery` | `bool` | true | Enable automatic stream recovery on failure |
+| `RecoveryTimeoutMs` | `uint64` | 15,000 | Timeout for recovery operations (ms) |
+| `RecoveryBackoffMs` | `uint64` | 2,000 | Delay between recovery retry attempts (ms) |
+| `RecoveryRetries` | `uint32` | 4 | Maximum number of recovery attempts |
+| `FlushTimeoutMs` | `uint64` | 300,000 | Timeout for flush operations (ms) |
+| `ServerLackOfAckTimeoutMs` | `uint64` | 60,000 | Timeout waiting for server acks (ms) |
+| `RecordType` | `int` | Proto | Record type: `RecordTypeProto` or `RecordTypeJson` |
+
+**Example:**
+
+```go
+options := zerobus.DefaultStreamConfigurationOptions()
+options.MaxInflightRecords = 50000
+options.RecoveryRetries = 10
+options.FlushTimeoutMs = 600000
+options.RecordType = zerobus.RecordTypeJson
+```
+
+## Error Handling
+
+The SDK categorizes errors as **retryable** or **non-retryable**:
+
+### Retryable Errors
+Auto-recovered if `Recovery` is enabled:
+- Network failures
+- Connection timeouts
+- Temporary server errors
+- Stream closed by server
+
+### Non-Retryable Errors
+Require manual intervention:
+- Invalid OAuth credentials
+- Invalid table name
+- Schema mismatch
+- Authentication failure
+- Permission denied
+
+**Check if an error is retryable:**
+
+```go
+offset, err := stream.IngestRecord(data)
+if err != nil {
+    if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
+        if zerobusErr.Retryable() {
+            log.Printf("Retryable error, SDK will auto-recover: %v", err)
+            // Optionally implement custom retry logic
+        } else {
+            log.Fatalf("Fatal error, manual intervention needed: %v", err)
+        }
+    }
+}
+```
+
+## Examples
+
+The repository provides two complete examples:
+
+- **`examples/basic_json_usage.go`** - Simple JSON-based ingestion (recommended for getting started)
+- **`examples/basic_proto_usage.go`** - Type-safe Protocol Buffer ingestion (recommended for production)
+
+Run an example:
+
+```bash
+cd examples
+export ZEROBUS_SERVER_ENDPOINT="https://your-zerobus-endpoint.databricks.com"
+export DATABRICKS_WORKSPACE_URL="https://your-workspace.databricks.com"
+export DATABRICKS_CLIENT_ID="your-client-id"
+export DATABRICKS_CLIENT_SECRET="your-client-secret"
+export ZEROBUS_TABLE_NAME="catalog.schema.table"
+go run basic_json_usage.go
+```
+
+## Best Practices
+
+1. **Reuse SDK Instances** - Create one `ZerobusSdk` per application and reuse for multiple streams
+2. **Always Close Streams** - Use `defer stream.Close()` to ensure all data is flushed
+3. **Tune Inflight Limits** - Adjust `MaxInflightRecords` based on memory and throughput needs
+4. **Enable Recovery** - Always set `Recovery: true` in production environments
+5. **Use Batch Ingestion** - For high throughput, ingest many records before calling `Flush()`
+6. **Monitor Errors** - Log and alert on non-retryable errors
+7. **Use Protocol Buffers for Production** - More efficient than JSON for high-volume scenarios
+8. **Secure Credentials** - Never hardcode secrets; use environment variables or secret managers
+9. **Test Recovery** - Simulate failures to verify your error handling logic
+10. **One Stream Per Goroutine** - Don't share streams across goroutines; create separate streams for concurrent ingestion
 
 ## API Reference
 
-### ZerobusSdk
+### `ZerobusSdk`
 
-The main SDK entry point for managing connections.
+Main entry point for the SDK.
 
 #### `NewZerobusSdk(zerobusEndpoint, unityCatalogURL string) (*ZerobusSdk, error)`
 
@@ -172,33 +517,34 @@ Creates a new SDK instance.
 - `zerobusEndpoint`: Zerobus gRPC service endpoint
 - `unityCatalogURL`: Unity Catalog URL for OAuth token acquisition
 
-#### `CreateStream(tableProps, clientID, clientSecret string, options) (*ZerobusStream, error)`
+#### `CreateStream(tableProps TableProperties, clientID, clientSecret string, options *StreamConfigurationOptions) (*ZerobusStream, error)`
 
 Creates a new ingestion stream with OAuth authentication.
-
-- `tableProps`: Table properties (name and optional descriptor)
-- `clientID`, `clientSecret`: OAuth 2.0 credentials
-- `options`: Stream configuration (nil for defaults)
 
 #### `Free()`
 
 Explicitly releases SDK resources. Called automatically by finalizer.
 
-### ZerobusStream
+### `ZerobusStream`
 
 Represents an active bidirectional streaming connection.
 
-#### `IngestProtoRecord(data []byte) (int64, error)`
+#### `IngestRecord(payload interface{}) (*RecordAck, error)`
 
-Ingests a Protocol Buffer encoded record.
+Ingests a record into the stream asynchronously (non-blocking). Accepts either:
+- `string` for JSON-encoded records
+- `[]byte` for Protocol Buffer-encoded records
 
-Returns the logical offset ID assigned to the record.
+Returns a `*RecordAck` that can be awaited to get the logical offset assigned to the record.
 
-#### `IngestJSONRecord(jsonData string) (int64, error)`
+**Example:**
+```go
+// Non-blocking - returns immediately with acknowledgment handle
+ack, err := stream.IngestRecord(`{"id": 1}`)
 
-Ingests a JSON-encoded record.
-
-Returns the logical offset ID assigned to the record.
+// Await acknowledgment to get offset
+offset, err := ack.Await()
+```
 
 #### `Flush() error`
 
@@ -208,133 +554,133 @@ Blocks until all pending records are acknowledged by the server.
 
 Gracefully closes the stream after flushing pending records.
 
-### StreamConfigurationOptions
+### `RecordAck`
 
-Configuration for stream behavior.
+Represents a pending acknowledgment for an ingested record.
 
+#### `Await() (int64, error)`
+
+Blocks until the record is acknowledged by the server and returns the offset.
+Can only be called once - subsequent calls return the cached result.
+
+**Example:**
 ```go
-type StreamConfigurationOptions struct {
-    MaxInflightRecords       uint64 // Default: 1,000,000
-    Recovery                 bool   // Default: true
-    RecoveryTimeoutMs        uint64 // Default: 15000
-    RecoveryBackoffMs        uint64 // Default: 2000
-    RecoveryRetries          uint32 // Default: 4
-    ServerLackOfAckTimeoutMs uint64 // Default: 60000
-    FlushTimeoutMs           uint64 // Default: 300000
-    UseJSONRecordType        bool   // Default: false
-}
-```
-
-### Error Handling
-
-```go
-offset, err := stream.IngestJSONRecord(data)
+ack, _ := stream.IngestRecord(data)
+offset, err := ack.Await()
 if err != nil {
-    if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
-        if zerobusErr.Retryable() {
-            // Retry logic for transient failures
-        }
-    }
+    log.Printf("Record failed: %v", err)
 }
 ```
 
-## Configuration
+#### `TryGet() (int64, error, bool)`
 
-### Environment Variables
+Non-blocking check for acknowledgment status.
 
-```bash
-export ZEROBUS_SERVER_ENDPOINT="https://your-zerobus-endpoint.databricks.com"
-export DATABRICKS_WORKSPACE_URL="https://your-workspace.databricks.com"
-export DATABRICKS_CLIENT_ID="your-oauth-client-id"
-export DATABRICKS_CLIENT_SECRET="your-oauth-client-secret"
-export ZEROBUS_TABLE_NAME="catalog.schema.table"
+Returns:
+- `(offset, nil, true)` if acknowledgment is ready
+- `(0, nil, false)` if still pending
+- `(0, error, true)` if an error occurred
+
+**Example:**
+```go
+ack, _ := stream.IngestRecord(data)
+// Do other work...
+if offset, err, ready := ack.TryGet(); ready {
+    if err != nil {
+        log.Printf("Record failed: %v", err)
+    } else {
+        log.Printf("Record acknowledged at offset %d", offset)
+    }
+} else {
+    log.Println("Still waiting for acknowledgment")
+}
 ```
 
-### Stream Options
-
-Customize behavior with `StreamConfigurationOptions`:
+### `TableProperties`
 
 ```go
-options := zerobus.DefaultStreamConfigurationOptions()
-options.MaxInflightRecords = 50000  // Lower for memory-constrained environments
-options.RecoveryRetries = 10         // More retries for unreliable networks
-options.FlushTimeoutMs = 600000      // 10 minute flush timeout
+type TableProperties struct {
+    TableName       string
+    DescriptorProto []byte
+}
 ```
 
-## Examples
+### `StreamConfigurationOptions`
 
-See the `examples/` directory for complete working examples:
+See [Configuration Options](#configuration-options) for details.
 
-- **`basic_json_usage.go`** - JSON ingestion (recommended, simple)
-- **`basic_proto_usage.go`** - Protocol Buffer ingestion (advanced)
+### `ZerobusError`
 
-Run an example:
+```go
+type ZerobusError struct {
+    Message     string
+    IsRetryable bool
+}
+```
+
+#### `Error() string`
+
+Returns the error message.
+
+#### `Retryable() bool`
+
+Returns `true` if the error can be automatically recovered by the SDK.
+
+## Building from Source
+
+For contributors or those who want to build and test the SDK:
 
 ```bash
-cd examples
-go run basic_json_usage.go
+git clone https://github.com/databricks/zerobus-go-sdk.git
+cd zerobus-go-sdk
+make build
 ```
 
-## Performance Tips
+**Build specific components:**
 
-1. **Batch ingestion**: Ingest multiple records concurrently for best throughput
-2. **Adjust MaxInflightRecords**: Balance memory usage vs throughput
-3. **Use Protocol Buffers**: More efficient than JSON for high-volume scenarios
-4. **Explicit Close()**: Call `stream.Close()` explicitly rather than relying on finalizers
+```bash
+# Build only Rust FFI
+make build-rust
 
-## Troubleshooting
+# Build only Go SDK
+make build-go
 
-### CGO Errors
+# Build examples
+make examples
 
-```
-could not determine kind of name for C.zerobus_sdk_new
-```
+# Run tests
+make test
 
-**Solution**: Ensure `libzerobus_ffi.so` is in `LD_LIBRARY_PATH` or copied to a system library directory.
+# Format code
+make fmt
 
-### Authentication Errors
-
-```
-ZerobusError: Unauthenticated
-```
-
-**Solution**: Verify OAuth client credentials and Unity Catalog URL. Ensure the client has permissions for the target table.
-
-### Build Errors
-
-```
-undefined reference to `zerobus_sdk_new'
+# Run linters
+make lint
 ```
 
-**Solution**: Rebuild the Rust FFI layer with `cargo build --release` in the `zerobus-ffi` directory.
+## Community and Contributing
 
-## Publishing
+This is an open source project. We welcome contributions, feedback, and bug reports.
 
-When publishing this SDK, reference the Rust SDK via git:
-
-In `zerobus-ffi/Cargo.toml`:
-
-```toml
-[dependencies]
-databricks-zerobus-ingest-sdk = { git = "https://github.com/databricks/zerobus-sdk-rs", tag = "v0.1.1" }
-```
+- **[Contributing Guide](CONTRIBUTING.md)**: Learn how to contribute, including our development process and coding style
+- **[Changelog](CHANGELOG.md)**: See the history of changes in the SDK
+- **[Security Policy](SECURITY.md)**: Read about our security process and how to report vulnerabilities
+- **[Developer Certificate of Origin (DCO)](DCO)**: Understand the agreement for contributions
+- **[Open Source Attributions](NOTICE)**: See a list of the open source libraries we use
 
 ## License
 
-This SDK wrapper follows the same license as the underlying Rust SDK. See LICENSE file for details.
+This SDK is licensed under the Databricks License. See the [LICENSE](LICENSE) file for the full license text. The license is also available online at [https://www.databricks.com/legal/db-license](https://www.databricks.com/legal/db-license).
 
-## Contributing
+## Requirements
 
-Contributions are welcome! Please ensure:
+- **Go** 1.19 or higher
+- **Rust** 1.70 or higher (for building from source)
+- **Databricks** workspace with Zerobus access enabled
+- **OAuth 2.0** client credentials (client ID and secret)
+- **Unity Catalog** endpoint access
+- **CGO** enabled (default on most systems)
 
-1. Rust FFI layer builds successfully
-2. Go code follows standard formatting (`go fmt`)
-3. Examples run without errors
-4. Documentation is updated for API changes
+---
 
-## Support
-
-For issues related to:
-- **This Go wrapper**: Open an issue in this repository
-- **Underlying Rust SDK**: See [zerobus-sdk-rs](https://github.com/databricks/zerobus-sdk-rs)
-- **Databricks Zerobus service**: Contact Databricks support
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/databricks/zerobus-go-sdk).

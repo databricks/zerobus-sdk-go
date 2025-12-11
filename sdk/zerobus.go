@@ -110,43 +110,58 @@ func (s *ZerobusSdk) CreateStream(
 	return stream, nil
 }
 
-// IngestRecord ingests a record into the stream.
-// This method blocks if the maximum number of in-flight records is reached (backpressure).
+// IngestRecord ingests a record into the stream (NON-BLOCKING).
+// This method returns immediately with an acknowledgment that can be awaited later.
 //
 // The payload parameter accepts either:
 //   - []byte for Protocol Buffer encoded records
 //   - string for JSON encoded records
 //
 // Returns:
-//   - offset: The logical offset ID assigned to this record
-//   - error: Any error that occurred during ingestion
+//   - *RecordAck: An acknowledgment that can be awaited for the offset
+//   - error: Any error that occurred during queueing
 //
 // The record type is automatically detected based on the payload type.
 // Records are acknowledged asynchronously by the server.
 //
 // Examples:
 //
-//	// JSON record
-//	offset, err := stream.IngestRecord(`{"field": "value"}`)
+//	// Fire off multiple records without waiting
+//	ack1 := stream.IngestRecord(`{"field": "value1"}`)
+//	ack2 := stream.IngestRecord(`{"field": "value2"}`)
+//	ack3 := stream.IngestRecord(`{"field": "value3"}`)
 //
-//	// Proto record
-//	offset, err := stream.IngestRecord(protoBytes)
-func (st *ZerobusStream) IngestRecord(payload interface{}) (int64, error) {
+//	// Wait for acknowledgments
+//	offset1, err1 := ack1.Await()
+//	offset2, err2 := ack2.Await()
+//	offset3, err3 := ack3.Await()
+func (st *ZerobusStream) IngestRecord(payload interface{}) (*RecordAck, error) {
 	if st.ptr == nil {
-		return -1, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
+		return nil, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
 	}
+
+	var ackID uint64
+	var err error
 
 	switch v := payload.(type) {
 	case []byte:
-		return streamIngestProtoRecord(st.ptr, v)
+		ackID, err = streamIngestProtoRecord(st.ptr, v)
 	case string:
-		return streamIngestJSONRecord(st.ptr, v)
+		ackID, err = streamIngestJSONRecord(st.ptr, v)
 	default:
-		return -1, &ZerobusError{
+		return nil, &ZerobusError{
 			Message:     "Invalid payload type: must be []byte or string",
 			IsRetryable: false,
 		}
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &RecordAck{
+		ackID: ackID,
+	}, nil
 }
 
 // Flush blocks until all pending records have been acknowledged by the server.

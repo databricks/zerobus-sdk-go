@@ -64,9 +64,11 @@ func main() {
 	}
 	defer stream.Close()
 
-	// Create and ingest records using the generated code
-	for i := 0; i < 10; i++ {
+
+	log.Println("Ingesting records (non-blocking)...")
+	for i := 0; i < 1000000; i++ {
 		// Create a message using the generated struct
+		// Change this message to match the schema of your table.
 		message := &pb.AirQuality{
 			DeviceName: proto.String("sensor-001"),
 			Temp:       proto.Int32(int32(20 + i)),
@@ -80,15 +82,15 @@ func main() {
 			continue
 		}
 
-		// Ingest the record
-		offset, err := stream.IngestRecord(data)
+		// Ingest the record (non-blocking)
+		_, err = stream.IngestRecord(data)
 		if err != nil {
 			log.Printf("Failed to ingest record %d: %v", i, err)
 			continue
 		}
 
-		log.Printf("Ingested record %d with offset %d (temp=%d, humidity=%d)",
-			i, offset, *message.Temp, *message.Humidity)
+		log.Printf("Queued record %d (temp=%d, humidity=%d)",
+			i, *message.Temp, *message.Humidity)
 	}
 
 	// Flush to ensure all records are acknowledged
