@@ -1,0 +1,4 @@
+sdk/zerobus-ffi/target/
+sdk/zerobus-ffi/Cargo.lock
+*.dylib
+*.so
