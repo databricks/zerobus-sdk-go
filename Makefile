@@ -15,9 +15,9 @@ help:
 	@echo "  make lint-go        - Run Go linters"
 	@echo "  make lint-rust      - Run Rust linters"
 	@echo "  make check          - Run all checks (fmt and lint)"
-	@echo "  make test           - Run all tests"
-	@echo "  make test-go        - Run Go tests"
-	@echo "  make test-rust      - Run Rust tests"
+	@echo "  make test           - Run all tests (Rust and Go)"
+	@echo "  make test-rust      - Run Rust unit tests"
+	@echo "  make test-go        - Run Go unit tests"
 	@echo "  make examples       - Build all examples"
 	@echo "  make release        - Build release package"
 
@@ -26,9 +26,10 @@ build: build-rust build-go
 build-rust:
 	@echo "Building Rust FFI layer..."
 	cd sdk/zerobus-ffi && cargo build --release
-	@echo "Copying static library..."
+	@echo "Copying static library and header..."
 	cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a sdk/
 	cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a .
+	cp sdk/zerobus-ffi/zerobus.h sdk/
 	@echo "✓ Rust FFI layer built successfully"
 
 build-go: build-rust
@@ -48,8 +49,9 @@ fmt: fmt-go fmt-rust
 
 fmt-go:
 	@echo "Formatting Go code..."
-	go fmt ./...
-	cd examples && go fmt ./...
+	cd sdk && go fmt ./...
+	cd examples/basic_example_json && go fmt ./...
+	cd examples/basic_example_proto && go fmt ./...
 
 fmt-rust:
 	@echo "Formatting Rust code..."
@@ -59,8 +61,9 @@ lint: lint-go lint-rust
 
 lint-go:
 	@echo "Linting Go code..."
-	go vet ./...
-	cd examples && go vet ./...
+	cd sdk && go vet ./...
+	cd examples/basic_example_json && go vet ./...
+	cd examples/basic_example_proto && go vet ./...
 
 lint-rust:
 	@echo "Linting Rust code..."
@@ -68,23 +71,22 @@ lint-rust:
 
 check: fmt lint
 
-test: test-go test-rust
-
-test-go:
-	@echo "Running Go tests..."
-	cd sdk && go test -v ./...
+test: test-rust test-go
 
 test-rust:
 	@echo "Running Rust tests..."
-	cd sdk/zerobus-ffi && cargo test
+	cd sdk/zerobus-ffi && cargo test -- --test-threads=1
+
+test-go:
+	@echo "Running Go tests..."
+	cd sdk && go test -v
 
 examples: build
 	@echo "Building examples..."
-	cd examples && go build -o /tmp/basic_json basic_json_usage.go
-	cd examples && go build -o /tmp/basic_proto basic_proto_usage.go
+	cd examples/basic_example_json && go build basic_json_usage.go
+	cd examples/basic_example_proto && go build basic_proto_usage.go
 	@echo "✓ Examples built successfully"
 
 release:
 	@echo "Building release package..."
-	./build_release.sh
-	@echo "✓ Release package created"
+	./scripts/build-release.sh

@@ -182,7 +182,7 @@ Example godoc comment:
 // IngestRecord submits a single record for ingestion into the stream.
 //
 // This method may block if the maximum number of in-flight records
-// has been reached, based on StreamConfigurationOptions.MaxInflightRecords.
+// has been reached, based on StreamConfigurationOptions.MaxInflightRequests.
 //
 // Returns the logical offset ID assigned to the record by the server.
 //

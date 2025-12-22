@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  test-user-experience:
+    name: Test go generate on ${{ matrix.os }}
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [linux-ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Simulate what users will do after go get
+      - name: Run go generate (user step 1)
+        working-directory: sdk
+        run: go generate -v
+
+      - name: Verify library built
+        run: test -f sdk/libzerobus_ffi.a
+
+      - name: Test go build works (user step 2)
+        working-directory: sdk
+        run: go build -v
+
+      - name: Test example builds
+        working-directory: examples/basic_example_json
+        run: go build -v
+
+  tests-ubuntu:
+    uses: ./.github/workflows/test.yml
+    with:
+      os: linux-ubuntu-latest
+
+  tests-macos:
+    uses: ./.github/workflows/test.yml
+    with:
+      os: macos-latest
+
+  fmt:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format all files
+        run: make fmt
+      - name: Fail on differences
+        run: git diff --exit-code
+
+  lint:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Lint code
+        run: make lint

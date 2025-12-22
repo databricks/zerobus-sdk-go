@@ -5,7 +5,7 @@ import (
 )
 
 // RecordAck represents a pending acknowledgment for an ingested record.
-// It allows non-blocking ingestion with deferred acknowledgment handling.
+// It allows ingestion with deferred acknowledgment handling.
 type RecordAck struct {
 	ackID  uint64
 	once   sync.Once

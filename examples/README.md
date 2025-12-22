@@ -4,17 +4,19 @@ This directory contains examples demonstrating how to use the Zerobus Go SDK to 
 
 ## Available Examples
 
-### 1. JSON Example (`basic_json_usage.go`)
+### 1. JSON Example
 **Recommended for getting started** - A simpler example that uses JSON for data serialization.
 
+- Location: `examples/basic_example_json/basic_json_usage.go`
 - No schema generation required
 - Direct JSON string ingestion
 - Easier to understand and modify
 - Great for quick prototyping
 
-### 2. Protocol Buffers Example (`basic_proto_usage.go`)
+### 2. Protocol Buffers Example
 A more advanced example that uses Protocol Buffers for type-safe data serialization.
 
+- Location: `examples/basic_example_proto/basic_proto_usage.go`
 - Requires protobuf schema generation
 - Type-safe record creation
 - Better for production use cases
@@ -24,7 +26,7 @@ A more advanced example that uses Protocol Buffers for type-safe data serializat
 
 Both examples demonstrate:
 - Creating a stream with OAuth authentication
-- Ingesting records asynchronously (non-blocking)
+- Ingesting records asynchronously
 - Awaiting acknowledgments
 - Properly closing the stream
 - Configuring credentials and endpoints
@@ -111,14 +113,14 @@ export DATABRICKS_CLIENT_SECRET="your-client-secret"
 export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
 
 # 2. Run the example
-cd examples
+cd examples/basic_example_json
 go run basic_json_usage.go
 ```
 
 ### Expected Output
 
 ```
-Ingesting records (non-blocking)...
+Ingesting records ...
 Queued record 0 (awaiting acknowledgment...)
 Queued record 1 (awaiting acknowledgment...)
 Queued record 2 (awaiting acknowledgment...)
@@ -179,7 +181,7 @@ go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 The example includes `air_quality.proto`. Generate the Go code:
 
 ```bash
-cd examples
+cd examples/basic_example_proto
 ./generate_proto.sh
 ```
 
@@ -206,14 +208,14 @@ export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
 ### Step 4: Run the Example
 
 ```bash
-cd examples
+cd examples/basic_example_proto
 go run basic_proto_usage.go
 ```
 
 ### Expected Output
 
 ```
-Ingesting records (non-blocking)...
+Ingesting records ...
 Queued record 0 (temp=20, humidity=60)
 Queued record 1 (temp=21, humidity=61)
 ...
@@ -345,7 +347,7 @@ defer sdk.Free()
 **JSON Example:**
 ```go
 options := zerobus.DefaultStreamConfigurationOptions()
-options.MaxInflightRecords = 50000
+options.MaxInflightRequests = 50000
 options.RecordType = zerobus.RecordTypeJson  // Important!
 ```
 
