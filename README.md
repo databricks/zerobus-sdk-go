@@ -29,6 +29,7 @@ We are keen to hear feedback from you on this SDK. Please [file issues](https://
 - [Best Practices](#best-practices)
 - [API Reference](#api-reference)
 - [Building from Source](#building-from-source)
+- [Troubleshooting](#troubleshooting)
 - [Community and Contributing](#community-and-contributing)
 - [License](#license)
 
@@ -80,9 +81,14 @@ This SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobus-s
 
 ### Prerequisites
 
-- **Go 1.19+**
-- **CGO enabled** (required for calling Rust code)
-- **Rust toolchain** (for building from source)
+#### All Platforms
+- **Go 1.21+**
+- **CGO enabled** (required for calling Rust code - enabled by default)
+- **Rust 1.75+** (install from https://rustup.rs)
+- **C compiler** (gcc on Linux, clang on macOS, MinGW on Windows)
+
+#### Windows
+On Windows, this SDK requires **MinGW-w64** (usually comes with Go). The SDK automatically builds Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's CGO.
 
 ### Quick Start
 
@@ -294,13 +300,13 @@ Create an SDK instance with your Databricks workspace endpoints:
 ```go
 // For AWS
 sdk, err := zerobus.NewZerobusSdk(
-    "https://your-shard-id.zerobus.us-east-1.cloud.databricks.com",
+    "https://your-shard-id.zerobus.region.cloud.databricks.com",
     "https://your-workspace.cloud.databricks.com",
 )
 
 // For Azure
 sdk, err := zerobus.NewZerobusSdk(
-    "https://your-shard-id.zerobus.eastus.azuredatabricks.net",
+    "https://your-shard-id.zerobus.region.azuredatabricks.net",
     "https://your-workspace.azuredatabricks.net",
 )
 
@@ -832,6 +838,61 @@ make fmt
 make lint
 ```
 
+### Platform-Specific Build Notes
+
+#### Windows
+The build system automatically compiles Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's MinGW-based CGO. This ensures the MSVC and GNU ABIs don't conflict. No manual configuration needed!
+
+#### Linux
+Standard GCC toolchain is used. Install build tools with:
+```bash
+sudo apt-get install build-essential  # Ubuntu/Debian
+sudo dnf install gcc                   # Fedora/RHEL
+```
+
+#### macOS
+Uses the system Clang toolchain. Install with:
+```bash
+xcode-select --install
+```
+
+## Troubleshooting
+
+### Installing Rust
+
+If you need to install Rust, use the official installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+After installation, restart your terminal or run:
+```bash
+source $HOME/.cargo/env
+```
+
+Verify installation:
+```bash
+rustc --version
+cargo --version
+```
+
+### Common Build Issues
+
+**"cargo not found"**
+- Ensure Rust is installed and `~/.cargo/bin` is in your PATH
+- Restart your terminal after installing Rust
+
+**"linker 'cc' not found"** (Linux)
+- Install build tools: `sudo apt-get install build-essential`
+
+**"xcrun: error: unable to find utility 'cc'"** (macOS)
+- Install Xcode tools: `xcode-select --install`
+
+**"undefined reference to __chkstk"** (Windows)
+- Ensure you're using MinGW-w64, not just MinGW
+- The SDK automatically builds for the GNU target
+
 ## Community and Contributing
 
 This is an open source project. We welcome contributions, feedback, and bug reports.
@@ -848,12 +909,21 @@ This SDK is licensed under the Databricks License. See the [LICENSE](LICENSE) fi
 
 ## Requirements
 
-- **Go** 1.19 or higher
-- **Rust** 1.70 or higher (for building from source)
-- **Databricks** workspace with Zerobus access enabled
-- **OAuth 2.0** client credentials (client ID and secret)
-- **Unity Catalog** endpoint access
-- **CGO** enabled (default on most systems)
+### Software
+- **Go 1.21+** 
+- **Rust 1.75+** (for building from source)
+- **CGO enabled** (default on most systems)
+- **MinGW-w64** (Windows only (usually included with Go))
+
+### Databricks
+- **Databricks workspace** with Zerobus access enabled
+- **OAuth 2.0 client credentials** (client ID and secret)
+- **Unity Catalog endpoint** access
+
+### Supported Platforms
+- **Linux** (x86_64, ARM64)
+- **macOS** (Intel, Apple Silicon)
+- **Windows** (x86_64 with MinGW)
 
 ---
 

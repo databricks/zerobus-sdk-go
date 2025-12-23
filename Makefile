@@ -25,16 +25,25 @@ build: build-rust build-go
 
 build-rust:
 	@echo "Building Rust FFI layer..."
-	cd sdk/zerobus-ffi && cargo build --release
+	@# On Windows with MinGW, we need to build for the GNU target
+	@if [ "$$OS" = "Windows_NT" ]; then \
+		echo "Detected Windows - building for x86_64-pc-windows-gnu target"; \
+		cd sdk/zerobus-ffi && cargo build --release --target x86_64-pc-windows-gnu; \
+	else \
+		cd sdk/zerobus-ffi && cargo build --release; \
+	fi
 	@echo "Copying static library and header..."
 	@if [ -f sdk/zerobus-ffi/target/release/libzerobus_ffi.a ]; then \
 		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a sdk/; \
 		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a .; \
+	elif [ -f sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a ]; then \
+		cp sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a sdk/; \
+		cp sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a .; \
 	elif [ -f sdk/zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
 		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib sdk/libzerobus_ffi.a; \
 		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib libzerobus_ffi.a; \
 	else \
-		echo "Error: Could not find Rust library (tried libzerobus_ffi.a and zerobus_ffi.lib)"; \
+		echo "Error: Could not find Rust library"; \
 		exit 1; \
 	fi
 	cp sdk/zerobus-ffi/zerobus.h sdk/

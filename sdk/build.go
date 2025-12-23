@@ -105,9 +105,13 @@ func buildRustLibrary(sdkDir string) error {
 		return fmt.Errorf("cargo not found. Install Rust from https://rustup.rs")
 	}
 
-	// Prefer cargo-zigbuild if available
+	// Determine build command based on platform
 	var cmd *exec.Cmd
-	if _, err := exec.LookPath("cargo-zigbuild"); err == nil {
+	if runtime.GOOS == "windows" {
+		// On Windows, build for GNU target to be compatible with MinGW
+		fmt.Println("Building for Windows GNU target (MinGW compatible)...")
+		cmd = exec.Command("cargo", "build", "--release", "--target", "x86_64-pc-windows-gnu")
+	} else if _, err := exec.LookPath("cargo-zigbuild"); err == nil {
 		fmt.Println("Using cargo-zigbuild for optimized cross-compilation...")
 		cmd = exec.Command("cargo", "zigbuild", "--release")
 	} else {
@@ -123,22 +127,33 @@ func buildRustLibrary(sdkDir string) error {
 		return fmt.Errorf("cargo build failed: %w", err)
 	}
 
-	// Copy library to SDK directory (handle both Unix and Windows naming)
+	// Copy library to SDK directory (handle multiple possible locations)
 	dstLib := filepath.Join(sdkDir, "libzerobus_ffi.a")
 
-	// Try Unix naming first (libzerobus_ffi.a)
-	srcLib := filepath.Join(ffiDir, "target", "release", "libzerobus_ffi.a")
-	data, err := os.ReadFile(srcLib)
+	// Try different possible locations
+	possiblePaths := []string{
+		filepath.Join(ffiDir, "target", "release", "libzerobus_ffi.a"),
+		filepath.Join(ffiDir, "target", "x86_64-pc-windows-gnu", "release", "libzerobus_ffi.a"),
+		filepath.Join(ffiDir, "target", "release", "zerobus_ffi.lib"),
+	}
+
+	var data []byte
+	var err error
+	var srcLib string
+
+	for _, path := range possiblePaths {
+		data, err = os.ReadFile(path)
+		if err == nil {
+			srcLib = path
+			break
+		}
+	}
 
 	if err != nil {
-		// Try Windows naming (zerobus_ffi.lib)
-		srcLib = filepath.Join(ffiDir, "target", "release", "zerobus_ffi.lib")
-		data, err = os.ReadFile(srcLib)
-		if err != nil {
-			return fmt.Errorf("failed to read built library (tried libzerobus_ffi.a and zerobus_ffi.lib): %w", err)
-		}
-		fmt.Println("Using Windows library: zerobus_ffi.lib")
+		return fmt.Errorf("failed to read built library (tried multiple locations): %w", err)
 	}
+
+	fmt.Printf("Using library: %s\n", srcLib)
 
 	if err := os.WriteFile(dstLib, data, 0644); err != nil {
 		return fmt.Errorf("failed to copy library: %w", err)

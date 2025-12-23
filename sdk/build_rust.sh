@@ -33,8 +33,12 @@ cd "$FFI_DIR"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
-# Use cargo-zigbuild if available (better cross-compilation)
-if command -v cargo-zigbuild &> /dev/null; then
+# Determine Rust target for Windows MinGW compatibility
+if [[ "$OS" == *"mingw"* ]] || [[ "$OS" == *"msys"* ]] || [[ "$OS" == *"cygwin"* ]] || [[ -n "$MSYSTEM" ]]; then
+    echo "Detected Windows/MinGW environment - building for GNU target..."
+    TARGET="x86_64-pc-windows-gnu"
+    cargo build --release --target "$TARGET"
+elif command -v cargo-zigbuild &> /dev/null; then
     echo "Using cargo-zigbuild for optimized build..."
     cargo zigbuild --release
 else
@@ -45,11 +49,18 @@ fi
 if [ -f "target/release/libzerobus_ffi.a" ]; then
     cp "target/release/libzerobus_ffi.a" "$OUTPUT_DIR/"
     echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a"
+elif [ -f "target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a" ]; then
+    # Windows GNU target
+    cp "target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a" "$OUTPUT_DIR/"
+    echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a (Windows GNU)"
 elif [ -f "target/release/zerobus_ffi.lib" ]; then
-    # Windows: copy .lib as .a for CGO compatibility
+    # Windows MSVC: copy .lib as .a for CGO compatibility
     cp "target/release/zerobus_ffi.lib" "$OUTPUT_DIR/libzerobus_ffi.a"
     echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a (from zerobus_ffi.lib)"
 else
-    echo "✗ Error: Could not find Rust library (tried libzerobus_ffi.a and zerobus_ffi.lib)"
+    echo "✗ Error: Could not find Rust library"
+    echo "   Tried: target/release/libzerobus_ffi.a"
+    echo "          target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a"
+    echo "          target/release/zerobus_ffi.lib"
     exit 1
 fi
