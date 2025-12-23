@@ -8,4 +8,4 @@ require (
 )
 
 // Use local zerobus module
-replace github.com/databricks/zerobus-go-sdk => ../sdk
+replace github.com/databricks/zerobus-go-sdk => ../../sdk

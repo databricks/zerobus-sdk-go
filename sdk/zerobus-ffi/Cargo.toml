@@ -4,17 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib"]
 
 [dependencies]
 # Reference the original SDK via git
-databricks-zerobus-ingest-sdk = { git = "https://github.com/databricks/zerobus-sdk-rs", branch = "main" }
+databricks-zerobus-ingest-sdk = { git = "https://github.com/databricks/zerobus-sdk-rs", rev = "19b48054" }
 
 # FFI helpers
 tokio = { version = "1.42", features = ["rt", "rt-multi-thread"] }
 once_cell = "1.19"
 prost = "0.13.3"
 prost-types = "0.13.3"
+async-trait = "0.1"
 
 [build-dependencies]
 cbindgen = "0.27"

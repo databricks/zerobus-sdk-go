@@ -1,4 +1,13 @@
+# Build artifacts - DO NOT COMMIT
 sdk/zerobus-ffi/target/
-sdk/zerobus-ffi/Cargo.lock
+sdk/libzerobus_ffi.a
+libzerobus_ffi.a
 *.dylib
 *.so
+*.a
+
+# Release artifacts
+releases/
+
+# OS files
+.DS_Store

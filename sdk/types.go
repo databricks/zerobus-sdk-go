@@ -14,9 +14,9 @@ const (
 
 // StreamConfigurationOptions contains configuration options for creating a stream
 type StreamConfigurationOptions struct {
-	// Maximum number of records that can be in-flight (pending acknowledgment) at once
+	// Maximum number of requests that can be in-flight (pending acknowledgment) at once.
 	// Default: 1,000,000
-	MaxInflightRecords uint64
+	MaxInflightRequests uint64
 
 	// Enable automatic stream recovery on retryable failures
 	// Default: true
@@ -50,7 +50,7 @@ type StreamConfigurationOptions struct {
 // DefaultStreamConfigurationOptions returns the default configuration options
 func DefaultStreamConfigurationOptions() *StreamConfigurationOptions {
 	return &StreamConfigurationOptions{
-		MaxInflightRecords:       1_000_000,
+		MaxInflightRequests:      1_000_000,
 		Recovery:                 true,
 		RecoveryTimeoutMs:        15000,
 		RecoveryBackoffMs:        2000,

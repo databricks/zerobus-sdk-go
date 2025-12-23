@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	// Get configuration from environment
+	// Get configuration from environment.
 	zerobusEndpoint := os.Getenv("ZEROBUS_SERVER_ENDPOINT")
 	unityCatalogURL := os.Getenv("DATABRICKS_WORKSPACE_URL")
 	clientID := os.Getenv("DATABRICKS_CLIENT_ID")
@@ -19,23 +19,23 @@ func main() {
 		log.Fatal("Missing required environment variables")
 	}
 
-	// Create SDK instance
+	// Create SDK instance.
 	sdk, err := zerobus.NewZerobusSdk(zerobusEndpoint, unityCatalogURL)
 	if err != nil {
 		log.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	// Configure stream options (optional)
+	// Configure stream options (optional).
 	options := zerobus.DefaultStreamConfigurationOptions()
-	options.MaxInflightRecords = 50000        // Lower for this example
-	options.RecordType = zerobus.RecordTypeJson // Use JSON instead of Proto
+	options.MaxInflightRequests = 50000         // Lower for this example.
+	options.RecordType = zerobus.RecordTypeJson // Use JSON instead of Proto.
 
-	// Create stream
+	// Create stream.
 	stream, err := sdk.CreateStream(
 		zerobus.TableProperties{
 			TableName:       tableName,
-			DescriptorProto: nil, // Not needed for JSON
+			DescriptorProto: nil, // Not needed for JSON.
 		},
 		clientID,
 		clientSecret,
@@ -46,28 +46,29 @@ func main() {
 	}
 	defer stream.Close()
 
-	// Ingest records
+	log.Println("Ingesting records...")
 	for i := 0; i < 5; i++ {
+		// Change this string to match the schema of your table.
 		jsonRecord := `{
             "device_name": "sensor-001",
             "temp": 20,
             "humidity": 60
         }`
 
-		offset, err := stream.IngestRecord(jsonRecord)
+		_, err = stream.IngestRecord(jsonRecord)
 		if err != nil {
 			log.Printf("Failed to ingest record %d: %v", i, err)
-			// Check if error is retryable
+			// Check if error is retryable.
 			if zerobusErr, ok := err.(*zerobus.ZerobusError); ok && zerobusErr.Retryable() {
 				log.Printf("Error is retryable, could retry...")
 			}
 			continue
 		}
 
-		log.Printf("Ingested record %d with offset %d", i, offset)
+		log.Printf("Queued record %d (awaiting acknowledgment...)", i)
 	}
 
-	// Flush to ensure all records are acknowledged
+	// Flush to ensure all records are acknowledged.
 	log.Println("Flushing stream...")
 	if err := stream.Flush(); err != nil {
 		log.Fatalf("Failed to flush: %v", err)
