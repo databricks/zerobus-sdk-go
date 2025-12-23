@@ -35,9 +35,11 @@ jobs:
         working-directory: examples/basic_example_json
         run: go build -v
 
-  test-user-experience-macos:
-    name: Test go generate on macOS
-    runs-on: macos-latest
+  test-user-experience-windows:
+    name: Test go generate on Windows
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: windows-server-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,27 +51,31 @@ jobs:
       - name: Run go generate (user step 1)
         working-directory: sdk
         run: go generate -v
+        shell: bash
 
       - name: Verify library built
         run: test -f sdk/libzerobus_ffi.a
+        shell: bash
 
       - name: Test go build works (user step 2)
         working-directory: sdk
         run: go build -v
+        shell: bash
 
       - name: Test example builds
         working-directory: examples/basic_example_json
         run: go build -v
+        shell: bash
 
   tests-ubuntu:
     uses: ./.github/workflows/test.yml
     with:
       os: linux-ubuntu-latest
 
-  tests-macos:
+  tests-windows:
     uses: ./.github/workflows/test.yml
     with:
-      os: macos-latest
+      os: windows-server-latest
 
   fmt:
     runs-on:
