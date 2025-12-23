@@ -13,7 +13,9 @@ We are keen to hear feedback from you on this SDK. Please [file issues](https://
 - [Overview](#overview)
 - [Features](#features)
 - [Architecture](#architecture)
-- [Installation](#installation)
+- [Getting Started](#getting-started)
+  - [For SDK Users (Install from pkg.go.dev)](#for-sdk-users-install-from-pkggodev)
+  - [For Contributors (Build from Source)](#for-contributors-build-from-source)
 - [Quick Start](#quick-start)
 - [Repository Structure](#repository-structure)
 - [Usage Guide](#usage-guide)
@@ -77,64 +79,78 @@ This SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobus-s
  Zerobus Service
 ```
 
-## Installation
+## Getting Started
 
-### Prerequisites
+Choose your installation path:
 
-#### All Platforms
+| Path | When to Use |
+|------|-------------|
+| **[For SDK Users](#for-sdk-users-install-from-pkggodev)** | You want to use the SDK in your project (via `go get`) |
+| **[For Contributors](#for-contributors-build-from-source)** | You want to contribute or build from source (via `git clone`) |
+
+### For SDK Users (Install from pkg.go.dev)
+
+**Prerequisites:**
+
+*System Requirements:*
 - **Go 1.21+**
-- **CGO enabled** (required for calling Rust code - enabled by default)
-- **Rust 1.75+** (install from https://rustup.rs)
-- **C compiler** (gcc on Linux, clang on macOS, MinGW on Windows)
+- **CGO enabled** (enabled by default)
+- **Rust 1.75+** ([install from rustup.rs](https://rustup.rs))
+- **C compiler** (gcc on Linux, clang on macOS, MinGW-w64 on Windows)
 
-#### Windows
-On Windows, this SDK requires **MinGW-w64** (usually comes with Go). The SDK automatically builds Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's CGO.
+*Supported Platforms:*
+- **Linux** (x86_64, ARM64)
+- **macOS** (Intel, Apple Silicon)
+- **Windows** (x86_64 with MinGW-w64)
 
-### Quick Start
+*Databricks Requirements:*
+- **Databricks workspace** with Zerobus access enabled (AWS, Azure, or GCP)
+- **OAuth 2.0 client credentials** (client ID and secret)
+- **Unity Catalog endpoint** access
+
+**Installation:**
 
 ```bash
-# 1. Get the SDK
+# 1. Add the SDK to your project
 go get github.com/databricks/zerobus-go-sdk
 
-# 2. Build Rust FFI library (one-time, takes 2-5 minutes)
+# 2. Build the Rust FFI library (one-time setup, takes 2-5 minutes)
 go generate github.com/databricks/zerobus-go-sdk/sdk
 
-# 3. Use in your project!
+# 3. Build your project normally
+go build
 ```
 
-That's it! After `go generate`, regular `go build` works normally.
-
-### Adding to Your Project
-
-In your `go.mod`:
-
-```go
-require github.com/databricks/zerobus-go-sdk v0.1.0
-```
-
-In your code:
+**In your code:**
 
 ```go
 import zerobus "github.com/databricks/zerobus-go-sdk/sdk"
 
 func main() {
-    sdk, err := zerobus.NewZerobusSdk(endpoint, catalogURL)
-    // ...
+    sdk, err := zerobus.NewZerobusSdk(
+        "https://your-shard.zerobus.region.cloud.databricks.com",
+        "https://your-workspace.cloud.databricks.com",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer sdk.Free()
+    // ... create streams and ingest data
 }
 ```
 
-**First-time build:**
+> **Note:** After the initial `go generate` step, regular `go build` works normally. The Rust library is statically linked into your binary.
+
+### For Contributors (Build from Source)
+
+**Prerequisites:**
+- Same as above (Go, CGO, Rust, C compiler, Databricks workspace)
+- **Git**
+
+**Setup:**
 
 ```bash
-# In your project directory
-go generate github.com/databricks/zerobus-go-sdk/sdk
-go build
-```
-
-### For Local Development
-
-```bash
-# Clone and build
+# Clone the repository
 git clone https://github.com/databricks/zerobus-go-sdk.git
 cd zerobus-go-sdk/sdk
 go generate  # Builds Rust FFI
@@ -142,20 +158,26 @@ cd ..
 make build   # Builds everything
 ```
 
+See [Building from Source](#building-from-source) for more build options and [Community and Contributing](#community-and-contributing) for contribution guidelines.
+
 ## Quick Start
 
-### JSON Ingestion (Recommended for Getting Started)
+Once you've completed the [Getting Started](#getting-started) steps, here's how to ingest data:
+
+### JSON Ingestion (Simplest Approach)
+
+Perfect for getting started quickly without code generation:
 
 ```go
 package main
 
 import (
     "log"
-    zerobus "github.com/databricks/zerobus-go-sdk"
+    zerobus "github.com/databricks/zerobus-go-sdk/sdk"
 )
 
 func main() {
-    // Create SDK instance
+    // 1. Initialize SDK
     sdk, err := zerobus.NewZerobusSdk(
         "https://your-shard-id.zerobus.region.cloud.databricks.com",
         "https://your-workspace.cloud.databricks.com",
@@ -165,11 +187,11 @@ func main() {
     }
     defer sdk.Free()
 
-    // Configure for JSON records
+    // 2. Configure for JSON records
     options := zerobus.DefaultStreamConfigurationOptions()
     options.RecordType = zerobus.RecordTypeJson
 
-    // Create stream
+    // 3. Create stream
     stream, err := sdk.CreateStream(
         zerobus.TableProperties{
             TableName: "catalog.schema.table",
@@ -183,27 +205,29 @@ func main() {
     }
     defer stream.Close()
 
-    // Ingest record (blocks until queued, returns ack handle)
+    // 4. Ingest record (blocks until queued, returns ack handle)
     ack, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
     if err != nil {
         log.Fatal(err)
     }
 
-    // Await acknowledgment to get offset
+    // 5. Await acknowledgment to get offset
     offset, err := ack.Await()
     if err != nil {
         log.Fatal(err)
     }
     log.Printf("Ingested record at offset %d", offset)
 
-    // Flush to ensure durability
+    // 6. Flush to ensure durability
     if err := stream.Flush(); err != nil {
         log.Fatal(err)
     }
 }
 ```
 
-### Protocol Buffer Ingestion (Recommended for Production)
+### Protocol Buffer Ingestion (Production Recommended)
+
+For type-safe, efficient ingestion in production:
 
 ```go
 import (
@@ -211,7 +235,7 @@ import (
     "google.golang.org/protobuf/types/descriptorpb"
 )
 
-// Load descriptor from generated files
+// 1. Load descriptor from generated files
 descriptorBytes, err := os.ReadFile("path/to/schema.descriptor")
 if err != nil {
     log.Fatal(err)
@@ -222,7 +246,7 @@ if err := proto.Unmarshal(descriptorBytes, descriptor); err != nil {
     log.Fatal(err)
 }
 
-// Create stream for Proto records
+// 2. Create stream for Proto records
 options := zerobus.DefaultStreamConfigurationOptions()
 options.RecordType = zerobus.RecordTypeProto
 
@@ -236,12 +260,18 @@ stream, err := sdk.CreateStream(
     options,
 )
 
-// Ingest proto-encoded record (blocks until queued)
+// 3. Ingest proto-encoded record (blocks until queued)
 ack, err := stream.IngestRecord(protoBytes)
 
-// Await acknowledgment to get offset
+// 4. Await acknowledgment to get offset
 offset, err := ack.Await()
 ```
+
+### Next Steps
+
+- See [Usage Guide](#usage-guide) for detailed step-by-step documentation
+- See [Examples](#examples) for complete working examples you can run
+- See [Configuration Options](#configuration-options) to tune performance
 
 ## Repository Structure
 
@@ -271,8 +301,6 @@ zerobus-go-sdk/
 ├── tests/                          # Test suite
 │   └── README.md                   # Testing documentation
 │
-├── build.sh                        # Development build script
-├── build_release.sh                # Release packaging script
 ├── Makefile                        # Build automation
 ├── README.md                       # This file
 ├── CHANGELOG.md                    # Version history
@@ -288,10 +316,11 @@ zerobus-go-sdk/
 - **`sdk/`** - The main library containing Go SDK and Rust FFI wrapper
 - **`examples/`** - Complete working examples demonstrating SDK usage
 - **`tests/`** - Integration and unit tests
-- **`build.sh`** - Automated build script for development
 - **`Makefile`** - Standard make targets for building, testing, and linting
 
 ## Usage Guide
+
+This section provides detailed step-by-step documentation. For a quick start, see [Quick Start](#quick-start). For working examples, see [Examples](#examples).
 
 ### 1. Initialize the SDK
 
@@ -600,22 +629,29 @@ if err != nil {
 
 ## Examples
 
-The repository provides two complete examples in separate directories:
+The `examples/` directory contains complete, runnable examples:
 
-- **`examples/basic_example_json/`** - Simple JSON-based ingestion (recommended for getting started)
-- **`examples/basic_example_proto/`** - Type-safe Protocol Buffer ingestion (recommended for production)
+- **`examples/basic_example_json/`** - Simple JSON-based ingestion
+- **`examples/basic_example_proto/`** - Type-safe Protocol Buffer ingestion
 
-Run an example:
+**To run an example:**
 
 ```bash
+# Navigate to an example directory
 cd examples/basic_example_json
+
+# Set your credentials
 export ZEROBUS_SERVER_ENDPOINT="https://your-zerobus-endpoint.databricks.com"
 export DATABRICKS_WORKSPACE_URL="https://your-workspace.databricks.com"
 export DATABRICKS_CLIENT_ID="your-client-id"
 export DATABRICKS_CLIENT_SECRET="your-client-secret"
 export ZEROBUS_TABLE_NAME="catalog.schema.table"
+
+# Run the example
 go run basic_json_usage.go
 ```
+
+Each example includes detailed comments and demonstrates best practices for production use.
 
 ## Best Practices
 
@@ -808,7 +844,9 @@ Returns `true` if the error can be automatically recovered by the SDK.
 
 ## Building from Source
 
-For contributors or those who want to build and test the SDK:
+This section is for contributors and those who need to build the SDK from source. If you just want to use the SDK, see [Getting Started](#getting-started) instead.
+
+### Basic Build
 
 ```bash
 git clone https://github.com/databricks/zerobus-go-sdk.git
@@ -816,7 +854,7 @@ cd zerobus-go-sdk
 make build
 ```
 
-**Build specific components:**
+### Build Specific Components
 
 ```bash
 # Build only Rust FFI
@@ -841,8 +879,7 @@ make lint
 ### Platform-Specific Build Notes
 
 #### Windows
-The build system automatically compiles Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's MinGW-based CGO. This ensures the MSVC and GNU ABIs don't conflict. No manual configuration needed!
-
+The build system automatically compiles Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's MinGW-based CGO. This ensures the MSVC and GNU ABIs don't conflict.
 #### Linux
 Standard GCC toolchain is used. Install build tools with:
 ```bash
@@ -906,24 +943,6 @@ This is an open source project. We welcome contributions, feedback, and bug repo
 ## License
 
 This SDK is licensed under the Databricks License. See the [LICENSE](LICENSE) file for the full license text. The license is also available online at [https://www.databricks.com/legal/db-license](https://www.databricks.com/legal/db-license).
-
-## Requirements
-
-### Software
-- **Go 1.21+** 
-- **Rust 1.75+** (for building from source)
-- **CGO enabled** (default on most systems)
-- **MinGW-w64** (Windows only (usually included with Go))
-
-### Databricks
-- **Databricks workspace** with Zerobus access enabled
-- **OAuth 2.0 client credentials** (client ID and secret)
-- **Unity Catalog endpoint** access
-
-### Supported Platforms
-- **Linux** (x86_64, ARM64)
-- **macOS** (Intel, Apple Silicon)
-- **Windows** (x86_64 with MinGW)
 
 ---
 

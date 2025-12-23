@@ -78,12 +78,14 @@ export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
 **How to get these values:**
 
 - **ZEROBUS_SERVER_ENDPOINT** - Zerobus ingestion endpoint for your workspace
-  - Format: `https://<workspace-id>.zerobus.<region>.cloud.databricks.com`
+  - **AWS**: `https://<workspace-id>.zerobus.<region>.cloud.databricks.com`
+  - **Azure**: `https://<workspace-id>.zerobus.<region>.azuredatabricks.net`
   - Ask your Databricks account team for the correct endpoint
 
 - **DATABRICKS_WORKSPACE_URL** - Your Databricks workspace URL (Unity Catalog endpoint)
   - This is the URL you use to access your Databricks workspace
-  - Example: `https://dbc-1234abcd-5678.cloud.databricks.com`
+  - **AWS**: `https://<workspace>.cloud.databricks.com`
+  - **Azure**: `https://<workspace>.azuredatabricks.net`
 
 - **DATABRICKS_CLIENT_ID** - OAuth 2.0 client ID from your service principal
   - Found in Settings → Identity and Access → Service Principals
