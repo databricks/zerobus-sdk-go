@@ -27,8 +27,16 @@ build-rust:
 	@echo "Building Rust FFI layer..."
 	cd sdk/zerobus-ffi && cargo build --release
 	@echo "Copying static library and header..."
-	cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a sdk/
-	cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a .
+	@if [ -f sdk/zerobus-ffi/target/release/libzerobus_ffi.a ]; then \
+		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a sdk/; \
+		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a .; \
+	elif [ -f sdk/zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
+		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib sdk/libzerobus_ffi.a; \
+		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib libzerobus_ffi.a; \
+	else \
+		echo "Error: Could not find Rust library (tried libzerobus_ffi.a and zerobus_ffi.lib)"; \
+		exit 1; \
+	fi
 	cp sdk/zerobus-ffi/zerobus.h sdk/
 	@echo "✓ Rust FFI layer built successfully"
 

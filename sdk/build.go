@@ -123,13 +123,21 @@ func buildRustLibrary(sdkDir string) error {
 		return fmt.Errorf("cargo build failed: %w", err)
 	}
 
-	// Copy library to SDK directory
-	srcLib := filepath.Join(ffiDir, "target", "release", "libzerobus_ffi.a")
+	// Copy library to SDK directory (handle both Unix and Windows naming)
 	dstLib := filepath.Join(sdkDir, "libzerobus_ffi.a")
 
+	// Try Unix naming first (libzerobus_ffi.a)
+	srcLib := filepath.Join(ffiDir, "target", "release", "libzerobus_ffi.a")
 	data, err := os.ReadFile(srcLib)
+
 	if err != nil {
-		return fmt.Errorf("failed to read built library: %w", err)
+		// Try Windows naming (zerobus_ffi.lib)
+		srcLib = filepath.Join(ffiDir, "target", "release", "zerobus_ffi.lib")
+		data, err = os.ReadFile(srcLib)
+		if err != nil {
+			return fmt.Errorf("failed to read built library (tried libzerobus_ffi.a and zerobus_ffi.lib): %w", err)
+		}
+		fmt.Println("Using Windows library: zerobus_ffi.lib")
 	}
 
 	if err := os.WriteFile(dstLib, data, 0644); err != nil {

@@ -42,7 +42,14 @@ else
     cargo build --release
 fi
 
-# Copy library to where CGO expects it
-cp "target/release/libzerobus_ffi.a" "$OUTPUT_DIR/"
-
-echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a"
+if [ -f "target/release/libzerobus_ffi.a" ]; then
+    cp "target/release/libzerobus_ffi.a" "$OUTPUT_DIR/"
+    echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a"
+elif [ -f "target/release/zerobus_ffi.lib" ]; then
+    # Windows: copy .lib as .a for CGO compatibility
+    cp "target/release/zerobus_ffi.lib" "$OUTPUT_DIR/libzerobus_ffi.a"
+    echo "✓ Rust library built successfully: $OUTPUT_DIR/libzerobus_ffi.a (from zerobus_ffi.lib)"
+else
+    echo "✗ Error: Could not find Rust library (tried libzerobus_ffi.a and zerobus_ffi.lib)"
+    exit 1
+fi
