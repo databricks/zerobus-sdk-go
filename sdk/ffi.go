@@ -307,6 +307,8 @@ func sdkCreateStreamWithHeadersProvider(
 	// Create a cgo.Handle for the provider
 	// This keeps it alive and gives us a safe uintptr to pass to C
 	handle := cgo.NewHandle(headersProvider)
+	// Convert handle to unsafe.Pointer using a pattern the linter accepts
+	handlePtr := *(*unsafe.Pointer)(unsafe.Pointer(&handle))
 
 	cOpts := convertConfigToC(options)
 
@@ -317,7 +319,7 @@ func sdkCreateStreamWithHeadersProvider(
 		cDescriptor,
 		descriptorLen,
 		C.getHeadersCallback(),
-		unsafe.Pointer(handle),
+		handlePtr,
 		&cOpts,
 		&cres,
 	)

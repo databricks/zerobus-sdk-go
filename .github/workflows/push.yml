@@ -7,14 +7,37 @@ on:
     types: [checks_requested]
 
 jobs:
-  test-user-experience:
-    name: Test go generate on ${{ matrix.os }}
+  test-user-experience-linux:
+    name: Test go generate on Linux
     runs-on:
       group: databricks-protected-runner-group
-      labels: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [linux-ubuntu-latest, macos-latest]
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Simulate what users will do after go get
+      - name: Run go generate (user step 1)
+        working-directory: sdk
+        run: go generate -v
+
+      - name: Verify library built
+        run: test -f sdk/libzerobus_ffi.a
+
+      - name: Test go build works (user step 2)
+        working-directory: sdk
+        run: go build -v
+
+      - name: Test example builds
+        working-directory: examples/basic_example_json
+        run: go build -v
+
+  test-user-experience-macos:
+    name: Test go generate on macOS
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

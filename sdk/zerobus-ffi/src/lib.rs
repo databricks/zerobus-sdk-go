@@ -1,21 +1,24 @@
+// Allow clippy warnings for FFI code where unsafe operations are unavoidable
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::type_complexity)]
+
+use once_cell::sync::Lazy;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::collections::{HashMap, HashSet};
-use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use databricks_zerobus_ingest_sdk::{
-    ZerobusSdk, ZerobusStream, ZerobusError,
-    TableProperties, StreamConfigurationOptions, EncodedRecord,
-    HeadersProvider, ZerobusResult,
-};
-use databricks_zerobus_ingest_sdk::databricks::zerobus::RecordType;
-use prost::Message;
 use async_trait::async_trait;
+use databricks_zerobus_ingest_sdk::databricks::zerobus::RecordType;
+use databricks_zerobus_ingest_sdk::{
+    EncodedRecord, HeadersProvider, StreamConfigurationOptions, TableProperties, ZerobusError,
+    ZerobusResult, ZerobusSdk, ZerobusStream,
+};
+use prost::Message;
 use std::sync::Arc;
 
 // Test module
@@ -23,9 +26,8 @@ use std::sync::Arc;
 mod tests;
 
 // Global Tokio runtime for handling async Rust calls
-static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    Runtime::new().expect("Failed to create Tokio runtime")
-});
+static RUNTIME: Lazy<Runtime> =
+    Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
 
 // Global acknowledgment registry
 static ACK_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -35,18 +37,19 @@ static ACK_REGISTRY: Lazy<Mutex<HashMap<u64, JoinHandle<Result<i64, ZerobusError
 // Global cache for header keys to prevent memory leaks
 // Header keys are typically a small set of constant strings (e.g., "Authorization", "Content-Type")
 // We intern them once to avoid leaking memory on every callback
-static HEADER_KEY_CACHE: Lazy<Mutex<HashSet<&'static str>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static HEADER_KEY_CACHE: Lazy<Mutex<HashSet<&'static str>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
 
 /// Intern a header key string to prevent memory leaks
 /// Only leaks memory for unique keys, not on every call
 pub(crate) fn intern_header_key(key: String) -> &'static str {
     let mut cache = HEADER_KEY_CACHE.lock().unwrap();
-    
+
     // Check if we already have this key
     if let Some(&existing) = cache.iter().find(|&&k| k == key.as_str()) {
         return existing;
     }
-    
+
     // Only leak if it's a new key (typically happens once per unique header name)
     let static_key: &'static str = Box::leak(key.into_boxed_str());
     cache.insert(static_key);
@@ -110,20 +113,20 @@ pub struct CStreamConfigurationOptions {
 
 impl From<CStreamConfigurationOptions> for StreamConfigurationOptions {
     fn from(c_opts: CStreamConfigurationOptions) -> Self {
-        let mut opts = StreamConfigurationOptions::default();
-        opts.max_inflight_requests = c_opts.max_inflight_requests;
-        opts.recovery = c_opts.recovery;
-        opts.recovery_timeout_ms = c_opts.recovery_timeout_ms;
-        opts.recovery_backoff_ms = c_opts.recovery_backoff_ms;
-        opts.recovery_retries = c_opts.recovery_retries;
-        opts.server_lack_of_ack_timeout_ms = c_opts.server_lack_of_ack_timeout_ms;
-        opts.flush_timeout_ms = c_opts.flush_timeout_ms;
-        opts.record_type = match c_opts.record_type {
-            1 => RecordType::Proto,
-            2 => RecordType::Json,
-            _ => RecordType::Unspecified,
-        };
-        opts
+        StreamConfigurationOptions {
+            max_inflight_requests: c_opts.max_inflight_requests,
+            recovery: c_opts.recovery,
+            recovery_timeout_ms: c_opts.recovery_timeout_ms,
+            recovery_backoff_ms: c_opts.recovery_backoff_ms,
+            recovery_retries: c_opts.recovery_retries,
+            server_lack_of_ack_timeout_ms: c_opts.server_lack_of_ack_timeout_ms,
+            flush_timeout_ms: c_opts.flush_timeout_ms,
+            record_type: match c_opts.record_type {
+                1 => RecordType::Proto,
+                2 => RecordType::Json,
+                _ => RecordType::Unspecified,
+            },
+        }
     }
 }
 
@@ -186,7 +189,7 @@ pub extern "C" fn zerobus_free_headers(headers: CHeaders) {
 pub(crate) struct CallbackHeadersProvider {
     callback: HeadersProviderCallback,
     user_data: *mut std::ffi::c_void,
-    in_use: AtomicBool,  // Track concurrent access to detect thread-safety issues
+    in_use: AtomicBool, // Track concurrent access to detect thread-safety issues
 }
 
 impl CallbackHeadersProvider {
@@ -209,13 +212,14 @@ impl HeadersProvider for CallbackHeadersProvider {
         // Check for concurrent access (indicates thread-safety issue)
         if self.in_use.swap(true, Ordering::SeqCst) {
             return Err(ZerobusError::InvalidArgument(
-                "Concurrent headers provider callback detected - Go callback must be thread-safe".to_string()
+                "Concurrent headers provider callback detected - Go callback must be thread-safe"
+                    .to_string(),
             ));
         }
-        
+
         // Call the Go callback (synchronous)
         let c_headers = (self.callback)(self.user_data);
-        
+
         // Release the lock before processing
         self.in_use.store(false, Ordering::SeqCst);
 
@@ -227,7 +231,10 @@ impl HeadersProvider for CallbackHeadersProvider {
                     .into_owned()
             };
             zerobus_free_headers(c_headers);
-            return Err(ZerobusError::InvalidArgument(format!("Headers provider error: {}", error_str)));
+            return Err(ZerobusError::InvalidArgument(format!(
+                "Headers provider error: {}",
+                error_str
+            )));
         }
 
         // Convert C headers to Rust HashMap
@@ -268,7 +275,9 @@ pub(crate) fn validate_sdk_ptr<'a>(sdk: *mut CZerobusSdk) -> Result<&'a ZerobusS
 }
 
 /// Safe wrapper to validate mutable SDK pointer
-pub(crate) fn validate_sdk_ptr_mut<'a>(sdk: *mut CZerobusSdk) -> Result<&'a mut ZerobusSdk, &'static str> {
+pub(crate) fn validate_sdk_ptr_mut<'a>(
+    sdk: *mut CZerobusSdk,
+) -> Result<&'a mut ZerobusSdk, &'static str> {
     if sdk.is_null() {
         return Err("SDK pointer is null");
     }
@@ -276,7 +285,9 @@ pub(crate) fn validate_sdk_ptr_mut<'a>(sdk: *mut CZerobusSdk) -> Result<&'a mut 
 }
 
 /// Safe wrapper to validate stream pointer
-pub(crate) fn validate_stream_ptr<'a>(stream: *mut CZerobusStream) -> Result<&'a ZerobusStream, &'static str> {
+pub(crate) fn validate_stream_ptr<'a>(
+    stream: *mut CZerobusStream,
+) -> Result<&'a ZerobusStream, &'static str> {
     if stream.is_null() {
         return Err("Stream pointer is null");
     }
@@ -284,7 +295,9 @@ pub(crate) fn validate_stream_ptr<'a>(stream: *mut CZerobusStream) -> Result<&'a
 }
 
 /// Safe wrapper to validate mutable stream pointer
-pub(crate) fn validate_stream_ptr_mut<'a>(stream: *mut CZerobusStream) -> Result<&'a mut ZerobusStream, &'static str> {
+pub(crate) fn validate_stream_ptr_mut<'a>(
+    stream: *mut CZerobusStream,
+) -> Result<&'a mut ZerobusStream, &'static str> {
     if stream.is_null() {
         return Err("Stream pointer is null");
     }
@@ -297,7 +310,9 @@ pub(crate) fn write_error_result(result: *mut CResult, message: &str, is_retryab
         unsafe {
             *result = CResult {
                 success: false,
-                error_message: CString::new(message).unwrap_or_else(|_| CString::new("Error message contains null byte").unwrap()).into_raw(),
+                error_message: CString::new(message)
+                    .unwrap_or_else(|_| CString::new("Error message contains null byte").unwrap())
+                    .into_raw(),
                 is_retryable,
             };
         }
@@ -307,7 +322,9 @@ pub(crate) fn write_error_result(result: *mut CResult, message: &str, is_retryab
 /// Helper to write success result
 pub(crate) fn write_success_result(result: *mut CResult) {
     if !result.is_null() {
-        unsafe { *result = CResult::success(); }
+        unsafe {
+            *result = CResult::success();
+        }
     }
 }
 
@@ -331,13 +348,16 @@ pub extern "C" fn zerobus_sdk_new(
     match res {
         Ok(sdk_ptr) => {
             if !result.is_null() {
-                unsafe { *result = CResult::success(); }
+                unsafe {
+                    *result = CResult::success();
+                }
             }
             sdk_ptr
         }
         Err(err) => {
             if !result.is_null() {
-                let err_msg = CString::new(err).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                let err_msg =
+                    CString::new(err).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
                 unsafe {
                     *result = CResult {
                         success: false,
@@ -394,11 +414,13 @@ pub extern "C" fn zerobus_sdk_create_stream(
     let res = RUNTIME.block_on(async {
         let table_name_str = unsafe { c_str_to_string(table_name).map_err(|e| e.to_string())? };
         let client_id_str = unsafe { c_str_to_string(client_id).map_err(|e| e.to_string())? };
-        let client_secret_str = unsafe { c_str_to_string(client_secret).map_err(|e| e.to_string())? };
+        let client_secret_str =
+            unsafe { c_str_to_string(client_secret).map_err(|e| e.to_string())? };
 
         // Decode descriptor if provided
         let descriptor_proto = if !descriptor_proto_bytes.is_null() && descriptor_proto_len > 0 {
-            let bytes = unsafe { std::slice::from_raw_parts(descriptor_proto_bytes, descriptor_proto_len) };
+            let bytes =
+                unsafe { std::slice::from_raw_parts(descriptor_proto_bytes, descriptor_proto_len) };
             Some(prost_types::DescriptorProto::decode(bytes).map_err(|e| e.to_string())?)
         } else {
             None
@@ -416,7 +438,12 @@ pub extern "C" fn zerobus_sdk_create_stream(
         };
 
         let stream = sdk_ref
-            .create_stream(table_props, client_id_str, client_secret_str, stream_options)
+            .create_stream(
+                table_props,
+                client_id_str,
+                client_secret_str,
+                stream_options,
+            )
             .await
             .map_err(|e| e.to_string())?;
 
@@ -462,7 +489,8 @@ pub extern "C" fn zerobus_sdk_create_stream_with_headers_provider(
 
         // Decode descriptor if provided
         let descriptor_proto = if !descriptor_proto_bytes.is_null() && descriptor_proto_len > 0 {
-            let bytes = unsafe { std::slice::from_raw_parts(descriptor_proto_bytes, descriptor_proto_len) };
+            let bytes =
+                unsafe { std::slice::from_raw_parts(descriptor_proto_bytes, descriptor_proto_len) };
             Some(prost_types::DescriptorProto::decode(bytes).map_err(|e| e.to_string())?)
         } else {
             None
@@ -485,9 +513,7 @@ pub extern "C" fn zerobus_sdk_create_stream_with_headers_provider(
         let stream = sdk_ref
             .create_stream_with_headers_provider(table_props, headers_provider, stream_options)
             .await
-            .map_err(|e| {
-                e.to_string()
-            })?;
+            .map_err(|e| e.to_string())?;
 
         let boxed = Box::new(stream);
         Ok::<*mut CZerobusStream, String>(Box::into_raw(boxed) as *mut CZerobusStream)
@@ -551,9 +577,7 @@ pub extern "C" fn zerobus_stream_ingest_proto_record(
         Ok(ack_future) => {
             // Spawn a task to await the acknowledgment
             let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let handle = RUNTIME.spawn(async move {
-                ack_future.await
-            });
+            let handle = RUNTIME.spawn(ack_future);
 
             // Store the handle
             ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
@@ -563,7 +587,9 @@ pub extern "C" fn zerobus_stream_ingest_proto_record(
         }
         Err(err) => {
             if !result.is_null() {
-                unsafe { *result = CResult::error(err); }
+                unsafe {
+                    *result = CResult::error(err);
+                }
             }
             0
         }
@@ -605,9 +631,7 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
         Ok(ack_future) => {
             // Spawn a task to await the acknowledgment
             let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let handle = RUNTIME.spawn(async move {
-                ack_future.await
-            });
+            let handle = RUNTIME.spawn(ack_future);
 
             // Store the handle
             ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
@@ -617,7 +641,9 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
         }
         Err(err) => {
             if !result.is_null() {
-                unsafe { *result = CResult::error(err); }
+                unsafe {
+                    *result = CResult::error(err);
+                }
             }
             0
         }
@@ -627,10 +653,7 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
 /// Await an acknowledgment (BLOCKING)
 /// Returns the offset on success, or -1 on error
 #[no_mangle]
-pub extern "C" fn zerobus_stream_await_ack(
-    ack_id: u64,
-    result: *mut CResult,
-) -> i64 {
+pub extern "C" fn zerobus_stream_await_ack(ack_id: u64, result: *mut CResult) -> i64 {
     // Remove the handle from the registry
     let handle = {
         let mut registry = ACK_REGISTRY.lock().unwrap();
@@ -645,13 +668,17 @@ pub extern "C" fn zerobus_stream_await_ack(
             match res {
                 Ok(Ok(offset)) => {
                     if !result.is_null() {
-                        unsafe { *result = CResult::success(); }
+                        unsafe {
+                            *result = CResult::success();
+                        }
                     }
                     offset
                 }
                 Ok(Err(err)) => {
                     if !result.is_null() {
-                        unsafe { *result = CResult::error(err); }
+                        unsafe {
+                            *result = CResult::error(err);
+                        }
                     }
                     -1
                 }
@@ -705,19 +732,25 @@ pub extern "C" fn zerobus_stream_try_get_ack(
             let res = RUNTIME.block_on(handle);
 
             if !is_ready.is_null() {
-                unsafe { *is_ready = true; }
+                unsafe {
+                    *is_ready = true;
+                }
             }
 
             match res {
                 Ok(Ok(offset)) => {
                     if !result.is_null() {
-                        unsafe { *result = CResult::success(); }
+                        unsafe {
+                            *result = CResult::success();
+                        }
                     }
                     offset
                 }
                 Ok(Err(err)) => {
                     if !result.is_null() {
-                        unsafe { *result = CResult::error(err); }
+                        unsafe {
+                            *result = CResult::error(err);
+                        }
                     }
                     -2
                 }
@@ -737,17 +770,23 @@ pub extern "C" fn zerobus_stream_try_get_ack(
         } else {
             // Still pending
             if !is_ready.is_null() {
-                unsafe { *is_ready = false; }
+                unsafe {
+                    *is_ready = false;
+                }
             }
             if !result.is_null() {
-                unsafe { *result = CResult::success(); }
+                unsafe {
+                    *result = CResult::success();
+                }
             }
             -1
         }
     } else {
         // Invalid ID
         if !is_ready.is_null() {
-            unsafe { *is_ready = false; }
+            unsafe {
+                *is_ready = false;
+            }
         }
         if !result.is_null() {
             unsafe {
@@ -764,10 +803,7 @@ pub extern "C" fn zerobus_stream_try_get_ack(
 
 /// Flush all pending records
 #[no_mangle]
-pub extern "C" fn zerobus_stream_flush(
-    stream: *mut CZerobusStream,
-    result: *mut CResult,
-) -> bool {
+pub extern "C" fn zerobus_stream_flush(stream: *mut CZerobusStream, result: *mut CResult) -> bool {
     let stream_ref = match validate_stream_ptr(stream) {
         Ok(s) => s,
         Err(msg) => {
@@ -776,9 +812,7 @@ pub extern "C" fn zerobus_stream_flush(
         }
     };
 
-    let res = RUNTIME.block_on(async {
-        stream_ref.flush().await
-    });
+    let res = RUNTIME.block_on(async { stream_ref.flush().await });
 
     match res {
         Ok(_) => {
@@ -787,7 +821,9 @@ pub extern "C" fn zerobus_stream_flush(
         }
         Err(err) => {
             if !result.is_null() {
-                unsafe { *result = CResult::error(err); }
+                unsafe {
+                    *result = CResult::error(err);
+                }
             }
             false
         }
@@ -796,10 +832,7 @@ pub extern "C" fn zerobus_stream_flush(
 
 /// Close the stream gracefully
 #[no_mangle]
-pub extern "C" fn zerobus_stream_close(
-    stream: *mut CZerobusStream,
-    result: *mut CResult,
-) -> bool {
+pub extern "C" fn zerobus_stream_close(stream: *mut CZerobusStream, result: *mut CResult) -> bool {
     let stream_ref = match validate_stream_ptr_mut(stream) {
         Ok(s) => s,
         Err(msg) => {
@@ -808,9 +841,7 @@ pub extern "C" fn zerobus_stream_close(
         }
     };
 
-    let res = RUNTIME.block_on(async {
-        stream_ref.close().await
-    });
+    let res = RUNTIME.block_on(async { stream_ref.close().await });
 
     match res {
         Ok(_) => {
@@ -819,7 +850,9 @@ pub extern "C" fn zerobus_stream_close(
         }
         Err(err) => {
             if !result.is_null() {
-                unsafe { *result = CResult::error(err); }
+                unsafe {
+                    *result = CResult::error(err);
+                }
             }
             false
         }

@@ -12,8 +12,9 @@ func TestStreamHandleRegistry(t *testing.T) {
 	testProvider := &mockHeadersProvider{}
 	handle := cgo.NewHandle(testProvider)
 
-	// Create a dummy stream pointer
-	dummyStreamPtr := unsafe.Pointer(uintptr(0x1234))
+	// Create a real allocated pointer (not a fake one)
+	dummyStream := struct{ id int }{1234}
+	dummyStreamPtr := unsafe.Pointer(&dummyStream)
 
 	// Store in registry
 	streamHandleRegistryMu.Lock()
@@ -45,7 +46,8 @@ func TestStreamHandleCleanup(t *testing.T) {
 	testProvider := &mockHeadersProvider{}
 	handle := cgo.NewHandle(testProvider)
 
-	dummyStreamPtr := unsafe.Pointer(uintptr(0x5678))
+	dummyStream := struct{ id int }{5678}
+	dummyStreamPtr := unsafe.Pointer(&dummyStream)
 
 	// Store in registry
 	streamHandleRegistryMu.Lock()
@@ -80,7 +82,8 @@ func TestHandleConcurrency(t *testing.T) {
 		go func(id int) {
 			testProvider := &mockHeadersProvider{}
 			handle := cgo.NewHandle(testProvider)
-			ptr := unsafe.Pointer(uintptr(0x1000 + id))
+			dummyStream := struct{ id int }{1000 + id}
+			ptr := unsafe.Pointer(&dummyStream)
 
 			// Store
 			streamHandleRegistryMu.Lock()

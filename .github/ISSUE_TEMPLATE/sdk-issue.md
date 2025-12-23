@@ -1,6 +1,6 @@
 ---
 name: SDK Issue
-about: Use this to report an issue with the Rust SDK for Databricks Zerobus Ingest service.
+about: Use this to report an issue with the Go SDK for Databricks Zerobus Ingest service.
 title: "[ISSUE] "
 labels: ''
 assignees: ''
