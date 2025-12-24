@@ -1,6 +1,5 @@
 # Build artifacts - DO NOT COMMIT
-sdk/zerobus-ffi/target/
-sdk/libzerobus_ffi.a
+zerobus-ffi/target/
 libzerobus_ffi.a
 *.dylib
 *.so

@@ -293,7 +293,7 @@ syntax = "proto2";
 
 package examples;
 
-option go_package = "github.com/databricks/zerobus-go-sdk/examples/pb";
+option go_package = "github.com/databricks/zerobus-sdk-go/examples/pb";
 
 message MyTable {
     optional string field1 = 1;

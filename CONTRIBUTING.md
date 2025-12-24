@@ -1,6 +1,6 @@
 # Contributing to Zerobus SDK for Go
 
-We happily welcome contributions to the Zerobus SDK for Go. We use [GitHub Issues](https://github.com/databricks/zerobus-go-sdk/issues) to track community reported issues and [GitHub Pull Requests](https://github.com/databricks/zerobus-go-sdk/pulls) for accepting changes.
+We happily welcome contributions to the Zerobus SDK for Go. We use [GitHub Issues](https://github.com/databricks/zerobus-sdk-go/issues) to track community reported issues and [GitHub Pull Requests](https://github.com/databricks/zerobus-sdk-go/pulls) for accepting changes.
 
 Contributions are licensed on a license-in/license-out basis.
 
@@ -29,8 +29,8 @@ Small patches and bug fixes don't need prior communication.
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/databricks/zerobus-go-sdk.git
-    cd zerobus-go-sdk
+    git clone https://github.com/databricks/zerobus-sdk-go.git
+    cd zerobus-sdk-go
     ```
 
 2. **Build the project:**
@@ -228,9 +228,9 @@ Available make targets:
 
 When making changes to the FFI layer:
 
-1. Update the Rust code in `sdk/zerobus-ffi/src/`
-2. Update the C header if needed in `sdk/zerobus-ffi/zerobus.h`
-3. Update the Go bindings in `sdk/ffi.go`
+1. Update the Rust code in `zerobus-ffi/src/`
+2. Update the C header if needed in `zerobus-ffi/zerobus.h`
+3. Update the Go bindings in `ffi.go`
 4. Rebuild with `make build`
 5. Test the changes with `make test`
 

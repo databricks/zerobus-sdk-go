@@ -21,14 +21,12 @@ jobs:
 
       # Simulate what users will do after go get
       - name: Run go generate (user step 1)
-        working-directory: sdk
         run: go generate -v
 
       - name: Verify library built
-        run: test -f sdk/libzerobus_ffi.a
+        run: test -f libzerobus_ffi.a
 
       - name: Test go build works (user step 2)
-        working-directory: sdk
         run: go build -v
 
       - name: Test example builds
@@ -51,16 +49,14 @@ jobs:
 
       # Simulate what users will do after go get
       - name: Run go generate (user step 1)
-        working-directory: sdk
         run: go generate -v
         shell: bash
 
       - name: Verify library built
-        run: test -f sdk/libzerobus_ffi.a
+        run: test -f libzerobus_ffi.a
         shell: bash
 
       - name: Test go build works (user step 2)
-        working-directory: sdk
         run: go build -v
         shell: bash
 
