@@ -21,7 +21,7 @@ func init() {
 		return
 	}
 	sdkDir := filepath.Dir(filename)
-	libPath := filepath.Join(sdkDir, "libzerobus_ffi.a")
+	libPath := filepath.Join(sdkDir, "lib", fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH), "libzerobus_ffi.a")
 
 	if _, err := os.Stat(libPath); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "\n"+
@@ -56,7 +56,7 @@ func ensureRustLibrary() error {
 		return fmt.Errorf("failed to determine source directory")
 	}
 	sdkDir := filepath.Dir(filename)
-	libPath := filepath.Join(sdkDir, "libzerobus_ffi.a")
+	libPath := filepath.Join(sdkDir, "lib", fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH), "libzerobus_ffi.a")
 
 	// Check if library already exists
 	if _, err := os.Stat(libPath); err == nil {
@@ -128,7 +128,11 @@ func buildRustLibrary(sdkDir string) error {
 	}
 
 	// Copy library to SDK directory (handle multiple possible locations)
-	dstLib := filepath.Join(sdkDir, "libzerobus_ffi.a")
+	dstDir := filepath.Join(sdkDir, "lib", fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH))
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return fmt.Errorf("failed to create library directory: %w", err)
+	}
+	dstLib := filepath.Join(dstDir, "libzerobus_ffi.a")
 
 	// Try different possible locations
 	possiblePaths := []string{
