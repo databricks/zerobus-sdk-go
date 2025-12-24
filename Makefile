@@ -25,24 +25,37 @@ build: build-rust build-go
 
 build-rust:
 	@echo "Building Rust FFI layer..."
-	@# On Windows with MinGW, we need to build for the GNU target
-	@if [ "$$OS" = "Windows_NT" ]; then \
+	@# Detect OS and Arch for the target directory
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+	ARCH=$$(uname -m); \
+	case "$$OS" in \
+		darwin*)  GOOS="darwin" ;; \
+		linux*)   GOOS="linux" ;; \
+		msys*|mingw*|cygwin*) GOOS="windows" ;; \
+		*)        GOOS="$$OS" ;; \
+	esac; \
+	case "$$ARCH" in \
+		x86_64)   GOARCH="amd64" ;; \
+		aarch64|arm64)  GOARCH="arm64" ;; \
+		*)        GOARCH="$$ARCH" ;; \
+	esac; \
+	LIB_DIR="lib/$${GOOS}_$${GOARCH}"; \
+	echo "Target directory: $$LIB_DIR"; \
+	mkdir -p $$LIB_DIR; \
+	if [ "$$OS" = "Windows_NT" ] || [[ "$$OS" == *"mingw"* ]] || [[ "$$OS" == *"msys"* ]]; then \
 		echo "Detected Windows - building for x86_64-pc-windows-gnu target"; \
 		cd zerobus-ffi && cargo build --release --target x86_64-pc-windows-gnu; \
+		cd ..; \
+		if [ -f zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a ]; then \
+			cp zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a $$LIB_DIR/; \
+		elif [ -f zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
+			cp zerobus-ffi/target/release/zerobus_ffi.lib $$LIB_DIR/libzerobus_ffi.a; \
+		fi; \
 	else \
 		cd zerobus-ffi && cargo build --release; \
-	fi
-	@echo "Copying static library and header..."
-	@if [ -f zerobus-ffi/target/release/libzerobus_ffi.a ]; then \
-		cp zerobus-ffi/target/release/libzerobus_ffi.a .; \
-	elif [ -f zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a ]; then \
-		cp zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a .; \
-	elif [ -f zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
-		cp zerobus-ffi/target/release/zerobus_ffi.lib libzerobus_ffi.a; \
-	else \
-		echo "Error: Could not find Rust library"; \
-		exit 1; \
-	fi
+		cd ..; \
+		cp zerobus-ffi/target/release/libzerobus_ffi.a $$LIB_DIR/; \
+	fi; \
 	cp zerobus-ffi/zerobus.h .
 	@echo "✓ Rust FFI layer built successfully"
 
@@ -54,6 +67,7 @@ build-go: build-rust
 clean:
 	@echo "Cleaning build artifacts..."
 	cd zerobus-ffi && cargo clean
+	rm -rf lib/
 	rm -f libzerobus_ffi.a
 	rm -rf releases
 	@echo "✓ Clean complete"

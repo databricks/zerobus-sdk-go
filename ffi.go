@@ -1,9 +1,11 @@
 package zerobus
 
 /*
-#cgo linux LDFLAGS: ${SRCDIR}/libzerobus_ffi.a -ldl -lpthread -lm -lresolv -lgcc_s
-#cgo darwin LDFLAGS: ${SRCDIR}/libzerobus_ffi.a -framework CoreFoundation -framework Security -liconv
-#cgo windows LDFLAGS: ${SRCDIR}/libzerobus_ffi.a -lws2_32 -luserenv -lbcrypt -lntdll
+#cgo linux,amd64 LDFLAGS: ${SRCDIR}/lib/linux_amd64/libzerobus_ffi.a -ldl -lpthread -lm -lresolv -lgcc_s
+#cgo linux,arm64 LDFLAGS: ${SRCDIR}/lib/linux_arm64/libzerobus_ffi.a -ldl -lpthread -lm -lresolv -lgcc_s
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/lib/darwin_amd64/libzerobus_ffi.a -framework CoreFoundation -framework Security -liconv
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/lib/darwin_arm64/libzerobus_ffi.a -framework CoreFoundation -framework Security -liconv
+#cgo windows,amd64 LDFLAGS: ${SRCDIR}/lib/windows_amd64/libzerobus_ffi.a -lws2_32 -luserenv -lbcrypt -lntdll
 #cgo CFLAGS: -I${SRCDIR}/zerobus-ffi -Wno-implicit-function-declaration
 
 #include <stdlib.h>

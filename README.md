@@ -85,41 +85,27 @@ Choose your installation path:
 
 | Path | When to Use |
 |------|-------------|
-| **[For SDK Users](#for-sdk-users-install-from-pkggodev)** | You want to use the SDK in your project (via `go get`) |
-| **[For Contributors](#for-contributors-build-from-source)** | You want to contribute or build from source (via `git clone`) |
+| **[Standard Installation](#installation)** | You want to use the SDK in your project (via `go get`) |
+| **[Development Setup](#development-setup)** | You want to contribute or build from source (via `git clone`) |
 
-### For SDK Users (Install from pkg.go.dev)
+### Installation
+
+The Zerobus Go SDK is a CGO-based wrapper around a high-performance Rust core. For the best experience, use a tagged release which includes pre-built binaries.
 
 **Prerequisites:**
 
-*System Requirements:*
 - **Go 1.21+**
 - **CGO enabled** (enabled by default)
-- **Rust 1.75+** ([install from rustup.rs](https://rustup.rs))
-- **C compiler** (gcc on Linux, clang on macOS, MinGW-w64 on Windows)
+- **C compiler** (gcc or clang)
 
-*Supported Platforms:*
-- **Linux** (x86_64, ARM64)
-- **macOS** (Intel, Apple Silicon)
-- **Windows** (x86_64 with MinGW-w64)
-
-*Databricks Requirements:*
-- **Databricks workspace** with Zerobus access enabled (AWS, Azure, or GCP)
-- **OAuth 2.0 client credentials** (client ID and secret)
-- **Unity Catalog endpoint** access
-
-**Installation:**
+**Installation Steps:**
 
 ```bash
-# 1. Add the SDK to your project
-go get github.com/databricks/zerobus-sdk-go
-
-# 2. Build the Rust FFI library (one-time setup, takes 2-5 minutes)
-go generate github.com/databricks/zerobus-sdk-go
-
-# 3. Build your project normally
-go build
+# Add the SDK to your project (use a tagged version for pre-built binaries)
+go get github.com/databricks/zerobus-sdk-go@latest
 ```
+
+> **Note:** Tagged releases (e.g., `v1.0.0`) come with pre-built Rust libraries for Linux, macOS, and Windows. If you use `@main` or a commit hash, you will need to have Rust installed and run `go generate` to build the library yourself.
 
 **In your code:**
 
@@ -141,7 +127,7 @@ func main() {
 
 > **Note:** After the initial `go generate` step, regular `go build` works normally. The Rust library is statically linked into your binary.
 
-### For Contributors (Build from Source)
+### Development Setup
 
 **Prerequisites:**
 - Same as above (Go, CGO, Rust, C compiler, Databricks workspace)

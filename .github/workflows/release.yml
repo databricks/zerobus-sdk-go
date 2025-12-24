@@ -1,0 +1,107 @@
+name: Seamless Release (CI-Augmented Tag)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-rust:
+    name: Build Rust (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            arch: amd64
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            arch: arm64
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            arch: amd64
+            target: x86_64-pc-windows-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Cross-Compilation Tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build Rust Library
+        working-directory: zerobus-ffi
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          mkdir -p dist/${{ runner.os == 'macOS' && 'darwin' || (runner.os == 'Windows' && 'windows' || 'linux') }}_${{ matrix.arch }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp zerobus-ffi/target/${{ matrix.target }}/release/libzerobus_ffi.a dist/windows_${{ matrix.arch }}/libzerobus_ffi.a || \
+            cp zerobus-ffi/target/${{ matrix.target }}/release/zerobus_ffi.lib dist/windows_${{ matrix.arch }}/libzerobus_ffi.a
+          else
+            cp zerobus-ffi/target/${{ matrix.target }}/release/libzerobus_ffi.a dist/${{ runner.os == 'macOS' && 'darwin' || 'linux' }}_${{ matrix.arch }}/libzerobus_ffi.a
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/
+
+  update-tag:
+    name: Update Tag with Binaries
+    needs: build-rust
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: lib-artifacts
+          merge-multiple: true
+
+      - name: Prepare lib directory
+        run: |
+          mkdir -p lib
+          cp -r lib-artifacts/* lib/
+          rm -rf lib-artifacts
+
+      - name: Commit and Force-Push Tag
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add the lib directory even though it's gitignored
+          git add -f lib/
+          
+          # Create an augmented commit
+          git commit -m "Release ${{ github.ref_name }} with pre-built binaries"
+          
+          # Force update the tag to this new commit
+          git tag -f ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }} --force
+
