@@ -8,7 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 # Reference the original SDK via git
-databricks-zerobus-ingest-sdk = { git = "https://github.com/databricks/zerobus-sdk-rs", rev = "19b48054" }
+databricks-zerobus-ingest-sdk = "0.2.0"
 
 # FFI helpers
 tokio = { version = "1.42", features = ["rt", "rt-multi-thread"] }

@@ -11,7 +11,7 @@ import (
 )
 
 // This file provides utilities for building the Rust FFI library.
-// Users must run: go generate github.com/databricks/zerobus-go-sdk/sdk
+// Users must run: go generate github.com/databricks/zerobus-sdk-go
 // before building their application.
 
 func init() {
@@ -31,11 +31,11 @@ func init() {
 			"\n"+
 			"The Zerobus Go SDK requires a one-time build step:\n"+
 			"\n"+
-			"  go generate github.com/databricks/zerobus-go-sdk/sdk\n"+
+			"  go generate github.com/databricks/zerobus-sdk-go\n"+
 			"\n"+
 			"Or if you're developing locally:\n"+
 			"\n"+
-			"  cd sdk && go generate\n"+
+			"  go generate\n"+
 			"\n"+
 			"Prerequisites:\n"+
 			"  - Rust 1.70+ (https://rustup.rs)\n"+

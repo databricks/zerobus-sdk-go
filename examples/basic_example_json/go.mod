@@ -3,8 +3,8 @@ module zerobus-examples
 go 1.25.3
 
 require (
-	github.com/databricks/zerobus-go-sdk v0.0.0
+	github.com/databricks/zerobus-sdk-go v0.1.0
 )
 
 // Use local zerobus module
-replace github.com/databricks/zerobus-go-sdk => ../../sdk
+replace github.com/databricks/zerobus-sdk-go => ../..

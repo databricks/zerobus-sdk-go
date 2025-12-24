@@ -1,4 +1,4 @@
-# Makefile for zerobus-go-sdk
+# Makefile for zerobus-sdk-go
 
 .PHONY: help build build-rust build-go clean fmt fmt-go fmt-rust lint lint-go lint-rust check test test-go test-rust examples release
 
@@ -28,36 +28,32 @@ build-rust:
 	@# On Windows with MinGW, we need to build for the GNU target
 	@if [ "$$OS" = "Windows_NT" ]; then \
 		echo "Detected Windows - building for x86_64-pc-windows-gnu target"; \
-		cd sdk/zerobus-ffi && cargo build --release --target x86_64-pc-windows-gnu; \
+		cd zerobus-ffi && cargo build --release --target x86_64-pc-windows-gnu; \
 	else \
-		cd sdk/zerobus-ffi && cargo build --release; \
+		cd zerobus-ffi && cargo build --release; \
 	fi
 	@echo "Copying static library and header..."
-	@if [ -f sdk/zerobus-ffi/target/release/libzerobus_ffi.a ]; then \
-		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a sdk/; \
-		cp sdk/zerobus-ffi/target/release/libzerobus_ffi.a .; \
-	elif [ -f sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a ]; then \
-		cp sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a sdk/; \
-		cp sdk/zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a .; \
-	elif [ -f sdk/zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
-		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib sdk/libzerobus_ffi.a; \
-		cp sdk/zerobus-ffi/target/release/zerobus_ffi.lib libzerobus_ffi.a; \
+	@if [ -f zerobus-ffi/target/release/libzerobus_ffi.a ]; then \
+		cp zerobus-ffi/target/release/libzerobus_ffi.a .; \
+	elif [ -f zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a ]; then \
+		cp zerobus-ffi/target/x86_64-pc-windows-gnu/release/libzerobus_ffi.a .; \
+	elif [ -f zerobus-ffi/target/release/zerobus_ffi.lib ]; then \
+		cp zerobus-ffi/target/release/zerobus_ffi.lib libzerobus_ffi.a; \
 	else \
 		echo "Error: Could not find Rust library"; \
 		exit 1; \
 	fi
-	cp sdk/zerobus-ffi/zerobus.h sdk/
+	cp zerobus-ffi/zerobus.h .
 	@echo "✓ Rust FFI layer built successfully"
 
 build-go: build-rust
 	@echo "Building Go SDK..."
-	cd sdk && go build -v
+	go build -v
 	@echo "✓ Go SDK built successfully"
 
 clean:
 	@echo "Cleaning build artifacts..."
-	cd sdk/zerobus-ffi && cargo clean
-	rm -f sdk/libzerobus_ffi.a
+	cd zerobus-ffi && cargo clean
 	rm -f libzerobus_ffi.a
 	rm -rf releases
 	@echo "✓ Clean complete"
@@ -66,25 +62,25 @@ fmt: fmt-go fmt-rust
 
 fmt-go:
 	@echo "Formatting Go code..."
-	cd sdk && go fmt ./...
+	go fmt ./...
 	cd examples/basic_example_json && go fmt ./...
 	cd examples/basic_example_proto && go fmt ./...
 
 fmt-rust:
 	@echo "Formatting Rust code..."
-	cd sdk/zerobus-ffi && cargo fmt --all
+	cd zerobus-ffi && cargo fmt --all
 
 lint: lint-go lint-rust
 
 lint-go:
 	@echo "Linting Go code..."
-	cd sdk && go vet ./...
+	go vet ./...
 	cd examples/basic_example_json && go vet ./...
 	cd examples/basic_example_proto && go vet ./...
 
 lint-rust:
 	@echo "Linting Rust code..."
-	cd sdk/zerobus-ffi && cargo clippy --all -- -D warnings
+	cd zerobus-ffi && cargo clippy --all -- -D warnings
 
 check: fmt lint
 
@@ -92,11 +88,11 @@ test: test-rust test-go
 
 test-rust:
 	@echo "Running Rust tests..."
-	cd sdk/zerobus-ffi && cargo test -- --test-threads=1
+	cd zerobus-ffi && cargo test -- --test-threads=1
 
 test-go:
 	@echo "Running Go tests..."
-	cd sdk && go test -v
+	go test -v
 
 examples: build
 	@echo "Building examples..."

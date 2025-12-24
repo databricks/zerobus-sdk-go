@@ -13,4 +13,4 @@ protoc --go_out=. --go_opt=paths=source_relative \
 echo "✓ Generated Go code in pb/ directory"
 echo ""
 echo "You can now import and use:"
-echo "  import pb \"github.com/databricks/zerobus-go-sdk/examples/basic_example_proto/pb\""
+echo "  import pb \"github.com/databricks/zerobus-sdk-go/examples/basic_example_proto/pb\""

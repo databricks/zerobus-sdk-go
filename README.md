@@ -6,7 +6,7 @@ A high-performance Go client for streaming data ingestion into Databricks Delta 
 
 [Public Preview](https://docs.databricks.com/release-notes/release-types.html): This SDK is supported for production use cases and is available to all customers. Databricks is actively working on stabilizing the Zerobus Ingest SDK for Go. Minor version updates may include backwards-incompatible changes.
 
-We are keen to hear feedback from you on this SDK. Please [file issues](https://github.com/databricks/zerobus-go-sdk/issues), and we will address them.
+We are keen to hear feedback from you on this SDK. Please [file issues](https://github.com/databricks/zerobus-sdk-go/issues), and we will address them.
 
 ## Table of Contents
 
@@ -112,10 +112,10 @@ Choose your installation path:
 
 ```bash
 # 1. Add the SDK to your project
-go get github.com/databricks/zerobus-go-sdk
+go get github.com/databricks/zerobus-sdk-go
 
 # 2. Build the Rust FFI library (one-time setup, takes 2-5 minutes)
-go generate github.com/databricks/zerobus-go-sdk/sdk
+go generate github.com/databricks/zerobus-sdk-go
 
 # 3. Build your project normally
 go build
@@ -124,7 +124,7 @@ go build
 **In your code:**
 
 ```go
-import zerobus "github.com/databricks/zerobus-go-sdk/sdk"
+import zerobus "github.com/databricks/zerobus-sdk-go"
 
 func main() {
     sdk, err := zerobus.NewZerobusSdk(
@@ -151,10 +151,9 @@ func main() {
 
 ```bash
 # Clone the repository
-git clone https://github.com/databricks/zerobus-go-sdk.git
-cd zerobus-go-sdk/sdk
+git clone https://github.com/databricks/zerobus-sdk-go.git
+cd zerobus-sdk-go
 go generate  # Builds Rust FFI
-cd ..
 make build   # Builds everything
 ```
 
@@ -173,7 +172,7 @@ package main
 
 import (
     "log"
-    zerobus "github.com/databricks/zerobus-go-sdk/sdk"
+    zerobus "github.com/databricks/zerobus-sdk-go"
 )
 
 func main() {
@@ -276,30 +275,35 @@ offset, err := ack.Await()
 ## Repository Structure
 
 ```
-zerobus-go-sdk/
-├── sdk/                            # Core SDK library
-│   ├── zerobus.go                  # Main SDK and stream implementation
-│   ├── ffi.go                      # CGO bindings to Rust FFI
-│   ├── errors.go                   # Error types
-│   ├── go.mod                      # Go module definition
-│   └── zerobus-ffi/                # Rust FFI crate
-│       ├── src/lib.rs              # FFI wrapper implementation
-│       ├── zerobus.h               # C header for CGO
-│       ├── Cargo.toml              # Rust dependencies
-│       └── build.rs                # Build script for cbindgen
+zerobus-sdk-go/
+├── zerobus.go                      # Main SDK and stream implementation
+├── ffi.go                          # CGO bindings to Rust FFI
+├── ffi_test.go                     # CGO bindings tests
+├── errors.go                       # Error types
+├── types.go                        # Type definitions
+├── ack.go                          # Acknowledgment handling
+├── build.go                        # Build utilities and go:generate
+├── build_rust.sh                   # Rust build script
+├── zerobus.h                       # C header (generated)
+├── go.mod                          # Go module definition
+├── zerobus-ffi/                    # Rust FFI crate
+│   ├── src/
+│   │   ├── lib.rs                  # FFI wrapper implementation
+│   │   └── tests.rs                # Rust FFI tests
+│   ├── zerobus.h                   # C header for CGO (generated)
+│   ├── Cargo.toml                  # Rust dependencies
+│   ├── Cargo.lock                  # Rust dependency lock file
+│   └── build.rs                    # Build script for cbindgen
 │
 ├── examples/                       # Working examples
-│   ├── basic_example_json/                       # JSON ingestion example
+│   ├── basic_example_json/         # JSON ingestion example
 │   │   ├── basic_json_usage.go     # JSON-based example
 │   │   └── go.mod                  # Module file
-│   └── basic_example_proto/                      # Protocol Buffer example
+│   └── basic_example_proto/        # Protocol Buffer example
 │       ├── basic_proto_usage.go    # Proto-based example
 │       ├── air_quality.proto       # Example proto schema
 │       ├── pb/                     # Generated proto code
 │       └── go.mod                  # Module file
-│
-├── tests/                          # Test suite
-│   └── README.md                   # Testing documentation
 │
 ├── Makefile                        # Build automation
 ├── README.md                       # This file
@@ -313,9 +317,9 @@ zerobus-go-sdk/
 
 ### Key Components
 
-- **`sdk/`** - The main library containing Go SDK and Rust FFI wrapper
+- **Root directory** - The main Go SDK library
+- **`zerobus-ffi/`** - Rust FFI wrapper for high-performance ingestion
 - **`examples/`** - Complete working examples demonstrating SDK usage
-- **`tests/`** - Integration and unit tests
 - **`Makefile`** - Standard make targets for building, testing, and linting
 
 ## Usage Guide
@@ -365,7 +369,7 @@ For advanced use cases, you can implement the `HeadersProvider` interface to sup
 **Example:**
 
 ```go
-import zerobus "github.com/databricks/zerobus-go-sdk"
+import zerobus "github.com/databricks/zerobus-sdk-go"
 
 // Implement the HeadersProvider interface.
 type MyCustomAuthProvider struct {
@@ -849,8 +853,8 @@ This section is for contributors and those who need to build the SDK from source
 ### Basic Build
 
 ```bash
-git clone https://github.com/databricks/zerobus-go-sdk.git
-cd zerobus-go-sdk
+git clone https://github.com/databricks/zerobus-sdk-go.git
+cd zerobus-sdk-go
 make build
 ```
 
@@ -946,4 +950,4 @@ This SDK is licensed under the Databricks License. See the [LICENSE](LICENSE) fi
 
 ---
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/databricks/zerobus-go-sdk).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/databricks/zerobus-sdk-go).

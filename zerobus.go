@@ -8,8 +8,8 @@
 //
 // This package requires a one-time build step to compile the Rust FFI layer:
 //
-//	go get github.com/databricks/zerobus-go-sdk/sdk
-//	go generate github.com/databricks/zerobus-go-sdk/sdk
+//	go get github.com/databricks/zerobus-sdk-go
+//	go generate github.com/databricks/zerobus-sdk-go
 //
 // Prerequisites: Go 1.19+, Rust 1.70+, CGO enabled
 //
@@ -114,7 +114,7 @@
 // This SDK uses static linking of the Rust FFI layer, resulting in self-contained
 // Go binaries with no runtime dependencies or library path configuration needed.
 //
-// For more information, visit: https://github.com/databricks/zerobus-go-sdk
+// For more information, visit: https://github.com/databricks/zerobus-sdk-go
 package zerobus
 
 import (

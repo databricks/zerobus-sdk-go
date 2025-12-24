@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	zerobus "github.com/databricks/zerobus-go-sdk"
+	zerobus "github.com/databricks/zerobus-sdk-go"
 )
 
 func main() {

@@ -6,7 +6,7 @@ import (
 
 	"zerobus-examples/pb"
 
-	zerobus "github.com/databricks/zerobus-go-sdk"
+	zerobus "github.com/databricks/zerobus-sdk-go"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
