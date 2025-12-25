@@ -17,18 +17,23 @@ jobs:
           - os: ubuntu-latest
             arch: amd64
             target: x86_64-unknown-linux-gnu
+            use-zig: false
           - os: ubuntu-latest
             arch: arm64
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
+            use-zig: false
+          - os: ubuntu-latest
             arch: amd64
             target: x86_64-apple-darwin
-          - os: macos-latest
+            use-zig: true
+          - os: ubuntu-latest
             arch: arm64
             target: aarch64-apple-darwin
+            use-zig: true
           - os: windows-latest
             arch: amd64
             target: x86_64-pc-windows-gnu
+            use-zig: false
 
     steps:
       - uses: actions/checkout@v4
@@ -44,12 +49,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Check Rust Compilation
+      - name: Install Zig and cargo-zigbuild (for macOS cross-compilation)
+        if: matrix.use-zig == true
+        run: |
+          # Install Zig
+          wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          tar -xf zig-linux-x86_64-0.13.0.tar.xz
+          sudo mv zig-linux-x86_64-0.13.0 /usr/local/zig
+          sudo ln -sf /usr/local/zig/zig /usr/local/bin/zig
+          
+          # Install cargo-zigbuild
+          cargo install cargo-zigbuild
+
+      - name: Check Rust Compilation (Standard)
+        if: matrix.use-zig == false
         working-directory: zerobus-ffi
         run: |
           cargo check --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Check Rust Compilation (Zig Cross-Compile)
+        if: matrix.use-zig == true
+        working-directory: zerobus-ffi
+        run: |
+          cargo zigbuild --check --release --target ${{ matrix.target }}
 
   check-go:
     name: Check Go SDK

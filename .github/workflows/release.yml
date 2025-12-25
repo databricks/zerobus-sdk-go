@@ -7,27 +7,34 @@ on:
 
 jobs:
   build-rust:
-    name: Build Rust (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+    name: Build Rust (${{ matrix.os-label }})
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: ${{ matrix.os-label }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os-label: linux-ubuntu-latest
             arch: amd64
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
+            use-zig: false
+          - os-label: linux-ubuntu-latest
             arch: arm64
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
+            use-zig: false
+          - os-label: linux-ubuntu-latest
             arch: amd64
             target: x86_64-apple-darwin
-          - os: macos-latest
+            use-zig: true
+          - os-label: linux-ubuntu-latest
             arch: arm64
             target: aarch64-apple-darwin
-          - os: windows-latest
+            use-zig: true
+          - os-label: windows-server-latest
             arch: amd64
             target: x86_64-pc-windows-gnu
+            use-zig: false
 
     steps:
       - uses: actions/checkout@v4
@@ -43,34 +50,72 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build Rust Library
+      - name: Install Zig and cargo-zigbuild (for macOS cross-compilation)
+        if: matrix.use-zig == true
+        run: |
+          # Install Zig
+          wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          tar -xf zig-linux-x86_64-0.13.0.tar.xz
+          sudo mv zig-linux-x86_64-0.13.0 /usr/local/zig
+          sudo ln -sf /usr/local/zig/zig /usr/local/bin/zig
+          
+          # Install cargo-zigbuild
+          cargo install cargo-zigbuild
+
+      - name: Build Rust Library (Standard)
+        if: matrix.use-zig == false
         working-directory: zerobus-ffi
         run: |
           cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+      - name: Build Rust Library (Zig Cross-Compile)
+        if: matrix.use-zig == true
+        working-directory: zerobus-ffi
+        run: |
+          cargo zigbuild --release --target ${{ matrix.target }}
+
       - name: Prepare Artifact
         shell: bash
         run: |
-          mkdir -p dist/${{ runner.os == 'macOS' && 'darwin' || (runner.os == 'Windows' && 'windows' || 'linux') }}_${{ matrix.arch }}
+          # Determine OS name based on target
+          case "${{ matrix.target }}" in
+            *-apple-darwin)
+              OS_NAME="darwin"
+              ;;
+            *-pc-windows-*)
+              OS_NAME="windows"
+              ;;
+            *-linux-*)
+              OS_NAME="linux"
+              ;;
+            *)
+              OS_NAME="unknown"
+              ;;
+          esac
+          
+          mkdir -p dist/${OS_NAME}_${{ matrix.arch }}
+          
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp zerobus-ffi/target/${{ matrix.target }}/release/libzerobus_ffi.a dist/windows_${{ matrix.arch }}/libzerobus_ffi.a || \
             cp zerobus-ffi/target/${{ matrix.target }}/release/zerobus_ffi.lib dist/windows_${{ matrix.arch }}/libzerobus_ffi.a
           else
-            cp zerobus-ffi/target/${{ matrix.target }}/release/libzerobus_ffi.a dist/${{ runner.os == 'macOS' && 'darwin' || 'linux' }}_${{ matrix.arch }}/libzerobus_ffi.a
+            cp zerobus-ffi/target/${{ matrix.target }}/release/libzerobus_ffi.a dist/${OS_NAME}_${{ matrix.arch }}/libzerobus_ffi.a
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lib-${{ matrix.os }}-${{ matrix.arch }}
+          name: lib-${{ matrix.target }}
           path: dist/
 
   update-tag:
     name: Update Tag with Binaries
     needs: build-rust
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -104,4 +149,3 @@ jobs:
           # Force update the tag to this new commit
           git tag -f ${{ github.ref_name }}
           git push origin ${{ github.ref_name }} --force
-
