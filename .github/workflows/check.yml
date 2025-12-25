@@ -8,7 +8,7 @@ on:
 
 jobs:
   check-rust-ffi:
-    name: Check Rust Build (${{ matrix.os-label }}-${{ matrix.arch }})
+    name: Check Rust Build (${{ matrix.target }})
     runs-on:
       group: databricks-protected-runner-group
       labels: ${{ matrix.os-label }}

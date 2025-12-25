@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-rust:
-    name: Build Rust (${{ matrix.os-label }})
+    name: Build Rust (${{ matrix.target }})
     runs-on:
       group: databricks-protected-runner-group
       labels: ${{ matrix.os-label }}
