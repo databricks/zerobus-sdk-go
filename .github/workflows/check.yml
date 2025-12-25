@@ -8,27 +8,34 @@ on:
 
 jobs:
   check-rust-ffi:
-    name: Check Rust Build (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+    name: Check Rust Build (${{ matrix.target }})
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: ${{ matrix.os-label }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os-label: linux-ubuntu-latest
             arch: amd64
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
+            use-zig: false
+          - os-label: linux-ubuntu-latest
             arch: arm64
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
+            use-zig: false
+          - os-label: linux-ubuntu-latest
             arch: amd64
             target: x86_64-apple-darwin
-          - os: macos-latest
+            use-zig: true
+          - os-label: linux-ubuntu-latest
             arch: arm64
             target: aarch64-apple-darwin
-          - os: windows-latest
+            use-zig: true
+          - os-label: windows-server-latest
             arch: amd64
             target: x86_64-pc-windows-gnu
+            use-zig: false
 
     steps:
       - uses: actions/checkout@v4
@@ -44,16 +51,56 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Check Rust Compilation
+      - name: Install Zig and cargo-zigbuild (for macOS cross-compilation)
+        if: matrix.use-zig == true
+        shell: bash
+        run: |
+          # Determine architecture
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ZIG_ARCH="x86_64" ;;
+            aarch64) ZIG_ARCH="aarch64" ;;
+            *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+          
+          ZIG_VERSION="0.13.0"
+          ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          
+          echo "Downloading Zig from $ZIG_URL"
+          wget -q "$ZIG_URL"
+          tar -xf "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          
+          # Install to a local directory and add to PATH
+          mkdir -p $HOME/.local/bin
+          rm -rf $HOME/.local/zig
+          mv "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}" $HOME/.local/zig
+          ln -sf $HOME/.local/zig/zig $HOME/.local/bin/zig
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          
+          # Install cargo-zigbuild if not present
+          if ! command -v cargo-zigbuild &> /dev/null; then
+            cargo install cargo-zigbuild
+          fi
+
+      - name: Check Rust Compilation (Standard)
+        if: matrix.use-zig == false
         working-directory: zerobus-ffi
         run: |
           cargo check --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+      - name: Check Rust Compilation (Zig Cross-Compile)
+        if: matrix.use-zig == true
+        working-directory: zerobus-ffi
+        run: |
+          cargo zigbuild --release --target ${{ matrix.target }}
+
   check-go:
     name: Check Go SDK
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
