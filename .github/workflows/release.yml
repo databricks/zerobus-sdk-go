@@ -52,15 +52,34 @@ jobs:
 
       - name: Install Zig and cargo-zigbuild (for macOS cross-compilation)
         if: matrix.use-zig == true
+        shell: bash
         run: |
-          # Install Zig
-          wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
-          tar -xf zig-linux-x86_64-0.13.0.tar.xz
-          sudo mv zig-linux-x86_64-0.13.0 /usr/local/zig
-          sudo ln -sf /usr/local/zig/zig /usr/local/bin/zig
+          # Determine architecture
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ZIG_ARCH="x86_64" ;;
+            aarch64) ZIG_ARCH="aarch64" ;;
+            *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
           
-          # Install cargo-zigbuild
-          cargo install cargo-zigbuild
+          ZIG_VERSION="0.13.0"
+          ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          
+          echo "Downloading Zig from $ZIG_URL"
+          wget -q "$ZIG_URL"
+          tar -xf "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          
+          # Install to a local directory and add to PATH
+          mkdir -p $HOME/.local/bin
+          rm -rf $HOME/.local/zig
+          mv "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}" $HOME/.local/zig
+          ln -sf $HOME/.local/zig/zig $HOME/.local/bin/zig
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          
+          # Install cargo-zigbuild if not present
+          if ! command -v cargo-zigbuild &> /dev/null; then
+            cargo install cargo-zigbuild
+          fi
 
       - name: Build Rust Library (Standard)
         if: matrix.use-zig == false
