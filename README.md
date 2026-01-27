@@ -12,28 +12,35 @@ We are keen to hear feedback from you on this SDK. Please [file issues](https://
 
 - [Overview](#overview)
 - [Features](#features)
-- [Architecture](#architecture)
 - [Getting Started](#getting-started)
   - [For SDK Users (Install from pkg.go.dev)](#for-sdk-users-install-from-pkggodev)
   - [For Contributors (Build from Source)](#for-contributors-build-from-source)
 - [Quick Start](#quick-start)
 - [Repository Structure](#repository-structure)
+- [How It Works](#how-it-works)
+  - [Architecture Overview](#architecture-overview)
+  - [Data Flow](#data-flow)
+  - [Authentication Flow](#authentication-flow)
+  - [Custom Authentication](#custom-authentication)
 - [Usage Guide](#usage-guide)
   - [1. Initialize the SDK](#1-initialize-the-sdk)
   - [2. Configure Authentication](#2-configure-authentication)
   - [3. Create a Stream](#3-create-a-stream)
   - [4. Ingest Data](#4-ingest-data)
   - [5. Handle Acknowledgments](#5-handle-acknowledgments)
-  - [6. Close the Stream](#6-close-the-stream)
+  - [6. Error Handling](#6-error-handling)
+  - [7. Close the Stream](#7-close-the-stream)
 - [Configuration Options](#configuration-options)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
+- [Tests](#tests)
 - [Best Practices](#best-practices)
+- [Migration Guide](#migration-guide)
 - [API Reference](#api-reference)
 - [Building from Source](#building-from-source)
-- [Troubleshooting](#troubleshooting)
 - [Community and Contributing](#community-and-contributing)
 - [License](#license)
+- [Requirements](#requirements)
 
 ## Overview
 
@@ -50,35 +57,12 @@ This SDK wraps the Rust [zerobus-sdk-rs](https://github.com/databricks/zerobus-s
 - **Automatic OAuth 2.0 authentication** with Unity Catalog
 - **Simple JSON ingestion** - No code generation required for basic use cases
 - **Protocol Buffers support** for type-safe, efficient data encoding
+- **Batch ingestion** - Ingest multiple records at once for maximum throughput
 - **Backpressure control** to manage memory usage
 - **Automatic retry and recovery** for transient failures
 - **Configurable timeouts and retry policies**
-- **Async acknowledgments** for ingested records
-- **Graceful stream management** - Proper flushing and acknowledgment tracking
-
-## Architecture
-
-```
-┌─────────────────┐
-│   Go SDK        │  ← Idiomatic Go API (this package)
-│   (zerobus)     │
-└────────┬────────┘
-         │ CGO (Static Linking)
-┌────────▼────────┐
-│  Rust FFI Crate │  ← C-compatible wrapper
-│ (zerobus-ffi)   │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  Rust SDK       │  ← Core async implementation (Tokio)
-│(zerobus-sdk-rs) │     - gRPC bidirectional streaming
-└────────┬────────┘     - OAuth 2.0 authentication
-         │              - Automatic recovery
-         ▼
-   Databricks
- Zerobus Service
-```
-
+- **Immediate offset returns** for ingested records
+- **Graceful stream management** - Proper flushing and resource cleanup
 ## Getting Started
 
 Choose your installation path:
@@ -147,7 +131,17 @@ See [Building from Source](#building-from-source) for more build options and [Co
 
 ## Quick Start
 
-Once you've completed the [Getting Started](#getting-started) steps, here's how to ingest data:
+The SDK supports two serialization formats and two ingestion methods:
+
+**Serialization:**
+- **JSON** (Recommended for getting started): Simpler approach using JSON strings, no schema generation required
+- **Protocol Buffers** (Recommended for production): Type-safe approach with schema validation at compile time
+
+**Ingestion Methods:**
+- **Single-record** (`IngestRecordOffset`): Ingest records one at a time with per-record acknowledgment
+- **Batch** (`IngestRecordsOffset`): Ingest multiple records at once with all-or-nothing semantics for higher throughput
+
+See [`examples/README.md`](examples/README.md) for detailed setup instructions and examples for all combinations.
 
 ### JSON Ingestion (Simplest Approach)
 
@@ -190,23 +184,19 @@ func main() {
     }
     defer stream.Close()
 
-    // 4. Ingest record (blocks until queued, returns ack handle)
-    ack, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
+    // 4. Send record to server and get offset
+    // The offset is a logical sequence number assigned to this record
+    offset, err := stream.IngestRecordOffset(`{"id": 1, "message": "Hello"}`)
     if err != nil {
         log.Fatal(err)
     }
+    log.Printf("Record queued for ingestion with offset %d", offset)
 
-    // 5. Await acknowledgment to get offset
-    offset, err := ack.Await()
-    if err != nil {
+    // 5. Wait for server to acknowledge the record is durably written
+    if err := stream.WaitForOffset(offset); err != nil {
         log.Fatal(err)
     }
-    log.Printf("Ingested record at offset %d", offset)
-
-    // 6. Flush to ensure durability
-    if err := stream.Flush(); err != nil {
-        log.Fatal(err)
-    }
+    log.Println("Record confirmed by server")
 }
 ```
 
@@ -245,11 +235,19 @@ stream, err := sdk.CreateStream(
     options,
 )
 
-// 3. Ingest proto-encoded record (blocks until queued)
-ack, err := stream.IngestRecord(protoBytes)
+// 3. Send proto-encoded record to server
+// Returns an offset that identifies this record in the ingestion sequence
+offset, err := stream.IngestRecordOffset(protoBytes)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Record queued with offset %d", offset)
 
-// 4. Await acknowledgment to get offset
-offset, err := ack.Await()
+// 4. Optionally wait for server acknowledgment
+if err := stream.WaitForOffset(offset); err != nil {
+    log.Fatal(err)
+}
+log.Println("Record confirmed by server")
 ```
 
 ### Next Steps
@@ -282,14 +280,23 @@ zerobus-sdk-go/
 │   └── build.rs                    # Build script for cbindgen
 │
 ├── examples/                       # Working examples
-│   ├── basic_example_json/         # JSON ingestion example
-│   │   ├── basic_json_usage.go     # JSON-based example
-│   │   └── go.mod                  # Module file
-│   └── basic_example_proto/        # Protocol Buffer example
-│       ├── basic_proto_usage.go    # Proto-based example
+│   ├── json/                       # JSON ingestion examples
+│   │   ├── single/                 # Single record ingestion
+│   │   │   ├── main.go
+│   │   │   └── go.mod
+│   │   └── batch/                  # Batch ingestion
+│   │       ├── main.go
+│   │       └── go.mod
+│   └── proto/                      # Protocol Buffer examples
+│       ├── single/                 # Single record ingestion
+│       │   ├── main.go
+│       │   └── go.mod
+│       ├── batch/                  # Batch ingestion
+│       │   ├── main.go
+│       │   └── go.mod
 │       ├── air_quality.proto       # Example proto schema
 │       ├── pb/                     # Generated proto code
-│       └── go.mod                  # Module file
+│       └── go.mod                  # Shared proto module
 │
 ├── Makefile                        # Build automation
 ├── README.md                       # This file
@@ -308,43 +315,54 @@ zerobus-sdk-go/
 - **`examples/`** - Complete working examples demonstrating SDK usage
 - **`Makefile`** - Standard make targets for building, testing, and linting
 
-## Usage Guide
+## How It Works
 
-This section provides detailed step-by-step documentation. For a quick start, see [Quick Start](#quick-start). For working examples, see [Examples](#examples).
+### Architecture Overview
 
-### 1. Initialize the SDK
-
-Create an SDK instance with your Databricks workspace endpoints:
-
-```go
-// For AWS
-sdk, err := zerobus.NewZerobusSdk(
-    "https://your-shard-id.zerobus.region.cloud.databricks.com",
-    "https://your-workspace.cloud.databricks.com",
-)
-
-// For Azure
-sdk, err := zerobus.NewZerobusSdk(
-    "https://your-shard-id.zerobus.region.azuredatabricks.net",
-    "https://your-workspace.azuredatabricks.net",
-)
-
-if err != nil {
-    log.Fatal(err)
-}
-defer sdk.Free()
+```
+┌─────────────────┐
+│   Go SDK        │  ← Idiomatic Go API (this package)
+│   (zerobus)     │
+└────────┬────────┘
+         │ CGO (Static Linking)
+┌────────▼────────┐
+│  Rust FFI Crate │  ← C-compatible wrapper
+│ (zerobus-ffi)   │
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│  Rust SDK       │  ← Core async implementation (Tokio)
+│(zerobus-sdk-rs) │     - gRPC bidirectional streaming
+└────────┬────────┘     - OAuth 2.0 authentication
+         │              - Automatic recovery
+         ▼
+   Databricks
+ Zerobus Service
 ```
 
-### 2. Configure Authentication
+The Go SDK consists of three layers:
 
-The SDK handles authentication automatically. You just need to provide your OAuth credentials:
+1. **Go SDK Layer** - Provides idiomatic Go APIs, manages object lifecycles, and handles Go-specific error handling
+2. **FFI Layer** - C-compatible interface that bridges Go and Rust, handling memory management across the boundary
+3. **Rust Core** - High-performance async implementation with gRPC streaming, OAuth, and automatic recovery
 
-```go
-clientID := os.Getenv("DATABRICKS_CLIENT_ID")
-clientSecret := os.Getenv("DATABRICKS_CLIENT_SECRET")
-```
+### Data Flow
 
-See the examples directory for how to obtain OAuth credentials.
+1. **Ingestion** - Your app calls `stream.IngestRecordOffset(data)` or `stream.IngestRecordsOffset(batch)`
+2. **Buffering** - Records are placed in the landing zone with logical offsets
+3. **Sending** - Sender task sends records over gRPC with physical offsets
+4. **Acknowledgment** - Receiver task gets server ack and resolves the offset
+5. **Recovery** - If connection fails, supervisor reconnects and resends unacked records
+
+### Authentication Flow
+
+The SDK uses OAuth 2.0 client credentials flow:
+
+1. SDK constructs authorization request with Unity Catalog privileges
+2. Sends request to `{uc_endpoint}/oidc/v1/token` with client credentials
+3. Token includes scoped permissions for the specific table
+4. Token is attached to gRPC metadata as Bearer token
+5. Fresh tokens are fetched automatically on each connection
 
 ### Custom Authentication
 
@@ -383,8 +401,8 @@ func example(sdk *zerobus.ZerobusSdk, tableProps zerobus.TableProperties) error 
     }
     defer stream.Close()
 
-    ack, _ := stream.IngestRecord(`{"data": "value"}`)
-    offset, _ := ack.Await()
+    offset, _ := stream.IngestRecordOffset(`{"data": "value"}`)
+    log.Printf("Ingested at offset: %d", offset)
     return nil
 }
 ```
@@ -394,6 +412,51 @@ func example(sdk *zerobus.ZerobusSdk, tableProps zerobus.TableProperties) error 
 - **Token caching**: Implement custom token refresh logic
 - **Alternative auth mechanisms**: Use different authentication providers
 - **Dynamic credentials**: Fetch credentials on-demand from secret managers
+
+## Usage Guide
+
+This section provides detailed step-by-step documentation. For a quick start, see [Quick Start](#quick-start). For working examples, see [Examples](#examples).
+
+The SDK supports two approaches for data serialization:
+
+1. **JSON** - Simpler approach that uses JSON strings. No schema generation required, making it ideal for quick prototyping. See [`examples/README.md`](examples/README.md) for a complete example.
+2. **Protocol Buffers** - Type-safe approach with schema validation at compile time. Recommended for production use cases. This guide focuses on the Protocol Buffers approach.
+
+For JSON-based ingestion, you can skip the schema generation step and directly pass JSON strings to `IngestRecordOffset()`.
+
+### 1. Initialize the SDK
+
+Create an SDK instance with your Databricks workspace endpoints:
+
+```go
+// For AWS
+sdk, err := zerobus.NewZerobusSdk(
+    "https://your-shard-id.zerobus.region.cloud.databricks.com",
+    "https://your-workspace.cloud.databricks.com",
+)
+
+// For Azure
+sdk, err := zerobus.NewZerobusSdk(
+    "https://your-shard-id.zerobus.region.azuredatabricks.net",
+    "https://your-workspace.azuredatabricks.net",
+)
+
+if err != nil {
+    log.Fatal(err)
+}
+defer sdk.Free()
+```
+
+### 2. Configure Authentication
+
+The SDK handles authentication automatically. You just need to provide your OAuth credentials:
+
+```go
+clientID := os.Getenv("DATABRICKS_CLIENT_ID")
+clientSecret := os.Getenv("DATABRICKS_CLIENT_SECRET")
+```
+
+See the examples directory for how to obtain OAuth credentials.
 
 ### 3. Create a Stream
 
@@ -425,43 +488,53 @@ defer stream.Close()
 **Single record:**
 
 ```go
-// JSON (string) - blocks until queued, handles backpressure
-ack, err := stream.IngestRecord(`{"id": 1, "value": "hello"}`)
+// JSON (string) - queues record and returns offset
+offset, err := stream.IngestRecordOffset(`{"id": 1, "value": "hello"}`)
 if err != nil {
     log.Fatal(err)
 }
-
-// Await acknowledgment
-offset, err := ack.Await()
-if err != nil {
-    log.Fatal(err)
-}
-log.Printf("Record ingested at offset: %d", offset)
+log.Printf("Record queued at offset: %d", offset)
 ```
 
 **Batch ingestion for high throughput:**
 
 ```go
-// Queue all records
-acks := make([]*zerobus.RecordAck, 0, 100000)
-for i := 0; i < 100000; i++ {
-    jsonData := fmt.Sprintf(`{"id": %d, "timestamp": %d}`, i, time.Now().Unix())
-    ack, err := stream.IngestRecord(jsonData)
-    if err != nil {
-        log.Fatal(err)
-    }
-    acks = append(acks, ack)
+// Ingest multiple records at once
+records := []interface{}{
+    `{"id": 1, "value": "first"}`,
+    `{"id": 2, "value": "second"}`,
+    `{"id": 3, "value": "third"}`,
 }
-
-// Wait for server acknowledgments
-for i, ack := range acks {
-    if _, err := ack.Await(); err != nil {
-        log.Printf("Record %d failed: %v", i, err)
-    }
+batchOffset, err := stream.IngestRecordsOffset(records)
+if err != nil {
+    log.Fatal(err)
 }
+log.Printf("Batch queued with offset: %d", batchOffset)
 ```
 
-**For non-blocking concurrent ingestion, use goroutines:**
+**High throughput pattern:**
+
+```go
+// Ingest many records without waiting
+for i := 0; i < 100000; i++ {
+    jsonData := fmt.Sprintf(`{"id": %d, "timestamp": %d}`, i, time.Now().Unix())
+    offset, err := stream.IngestRecordOffset(jsonData)
+    if err != nil {
+        log.Printf("Record %d failed: %v", i, err)
+        continue
+    }
+
+    // Optional: log progress
+    if i%10000 == 0 {
+        log.Printf("Ingested %d records, latest offset: %d", i, offset)
+    }
+}
+
+// Wait for all records to be acknowledged
+stream.Flush()
+```
+
+**Concurrent ingestion with goroutines:**
 
 ```go
 var wg sync.WaitGroup
@@ -473,18 +546,12 @@ for i := 0; i < 100; i++ {
         defer wg.Done()
 
         data := fmt.Sprintf(`{"id": %d}`, id)
-        ack, err := stream.IngestRecord(data)  // Blocks this goroutine
+        offset, err := stream.IngestRecordOffset(data)
         if err != nil {
             errCh <- err
             return
         }
-
-        offset, err := ack.Await()
-        if err != nil {
-            errCh <- err
-            return
-        }
-        log.Printf("Record %d acknowledged at offset %d", id, offset)
+        log.Printf("Record %d queued at offset %d", id, offset)
     }(id)
 }
 
@@ -515,11 +582,12 @@ for partition := 0; partition < 4; partition++ {
 
         for i := p * 25000; i < (p+1)*25000; i++ {
             data := fmt.Sprintf(`{"id": %d}`, i)
-            // Blocks until queued in this goroutine
-            if _, err := stream.IngestRecord(data); err != nil {
-                log.Fatal(err)
+            offset, err := stream.IngestRecordOffset(data)
+            if err != nil {
+                log.Printf("Failed to ingest: %v", err)
+                continue
             }
-            // Note: stream.Close() will flush and await all pending acks
+            // Note: stream.Close() will flush all pending records
         }
     }(p)
 }
@@ -528,25 +596,70 @@ wg.Wait()
 
 ### 5. Handle Acknowledgments
 
-After `IngestRecord()` returns, the record is queued. Use the returned acknowledgment to wait for server confirmation:
+The recommended `IngestRecordOffset()` and `IngestRecordsOffset()` methods return offsets directly (after queuing):
+- `IngestRecordOffset()` returns `int64`
+- `IngestRecordsOffset()` returns `int64` (one offset for the entire batch)
 
 ```go
-offset, err := stream.IngestRecord(data)
+// Ingest and get offset, after queuing the record
+offset, err := stream.IngestRecordOffset(data)
 if err != nil {
-    // Handle ingestion error
-    if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
-        if zerobusErr.Retryable() {
-            // Retry logic for transient failures
-        }
-    }
     log.Fatal(err)
 }
+log.Printf("Record queued with offset: %d", offset)
 
-// Offset is available immediately
-log.Printf("Record committed at offset: %d", offset)
+// Wait for acknowledgment when needed
+if err := stream.WaitForOffset(offset); err != nil {
+    log.Fatal(err)
+}
+log.Printf("Record confirmed at offset: %d", offset)
+
+// For batches, the method returns one offset for the entire batch
+batch := []interface{}{data1, data2, data3}
+batchOffset, err := stream.IngestRecordsOffset(batch)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Batch queued with offset: %d", batchOffset)
+
+// Wait for the entire batch to be acknowledged
+if err := stream.WaitForOffset(batchOffset); err != nil {
+    log.Fatal(err)
+}
+log.Println("Batch confirmed")
+
+// High-throughput:
+for i := 0; i < 1000; i++ {
+    _, _ := stream.IngestRecordOffset(record)
+}
+
+// Use Flush() to wait for all pending acknowledgments at once
+stream.Flush()
 ```
 
-### 6. Close the Stream
+### 6. Error Handling
+
+Handle ingestion errors appropriately:
+
+```go
+offset, err := stream.IngestRecordOffset(data)
+if err != nil {
+    // Check if error is retryable
+    if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
+        if zerobusErr.Retryable() {
+            // Transient error, SDK will auto-recover if Recovery is enabled
+            log.Printf("Retryable error: %v", err)
+        } else {
+            // Fatal error, requires manual intervention
+            log.Fatalf("Fatal error: %v", err)
+        }
+    }
+}
+
+log.Printf("Record queued at offset: %d", offset)
+```
+
+### 7. Close the Stream
 
 Always close streams to ensure data is flushed:
 
@@ -554,6 +667,20 @@ Always close streams to ensure data is flushed:
 // Close gracefully (flushes automatically)
 if err := stream.Close(); err != nil {
     log.Fatal(err)
+}
+```
+
+If the stream fails, retrieve unacknowledged records:
+
+```go
+if err := stream.Close(); err != nil {
+    // Stream failed, get unacked records
+    unacked, err := stream.GetUnackedRecords()
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("Failed to ack %d records", len(unacked))
+    // Retry with a new stream
 }
 ```
 
@@ -571,6 +698,7 @@ if err := stream.Close(); err != nil {
 | `FlushTimeoutMs` | `uint64` | 300,000 | Timeout for flush operations (ms) |
 | `ServerLackOfAckTimeoutMs` | `uint64` | 60,000 | Timeout waiting for server acks (ms) |
 | `RecordType` | `int` | Proto | Record type: `RecordTypeProto` or `RecordTypeJson` |
+| `StreamPausedMaxWaitTimeMs` | `*uint64` | nil | Max time to wait during graceful close when server sends pause signal (`nil` = wait full server duration, `0` = immediate, `x` = min(x, server_duration)) |
 
 **Example:**
 
@@ -604,7 +732,7 @@ Require manual intervention:
 **Check if an error is retryable:**
 
 ```go
-offset, err := stream.IngestRecord(data)
+offset, err := stream.IngestRecordOffset(data)
 if err != nil {
     if zerobusErr, ok := err.(*zerobus.ZerobusError); ok {
         if zerobusErr.Retryable() {
@@ -619,16 +747,21 @@ if err != nil {
 
 ## Examples
 
-The `examples/` directory contains complete, runnable examples:
+The `examples/` directory contains complete, runnable examples organized by format and ingestion pattern:
 
-- **`examples/basic_example_json/`** - Simple JSON-based ingestion
-- **`examples/basic_example_proto/`** - Type-safe Protocol Buffer ingestion
+**JSON Examples:**
+- **`examples/json/single/`** - Single record ingestion with JSON
+- **`examples/json/batch/`** - Batch ingestion with JSON
+
+**Protocol Buffer Examples:**
+- **`examples/proto/single/`** - Single record ingestion with protobuf
+- **`examples/proto/batch/`** - Batch ingestion with protobuf
 
 **To run an example:**
 
 ```bash
 # Navigate to an example directory
-cd examples/basic_example_json
+cd examples/json/single
 
 # Set your credentials
 export ZEROBUS_SERVER_ENDPOINT="https://your-zerobus-endpoint.databricks.com"
@@ -638,23 +771,115 @@ export DATABRICKS_CLIENT_SECRET="your-client-secret"
 export ZEROBUS_TABLE_NAME="catalog.schema.table"
 
 # Run the example
-go run basic_json_usage.go
+go run main.go
 ```
 
-Each example includes detailed comments and demonstrates best practices for production use.
+Each example includes detailed comments and demonstrates best practices for production use. See [`examples/README.md`](examples/README.md) for complete setup instructions, prerequisites, and detailed comparisons between examples.
+
+## Tests
+
+Tests are located in the repository and can be run using:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run specific test file
+go test -v ./ffi_test.go
+```
+
+The test suite includes:
+- **Unit tests** - Test individual functions and components
+- **FFI tests** - Test the CGO bindings to Rust
+- **Integration tests** - Test end-to-end functionality
 
 ## Best Practices
 
 1. **Reuse SDK Instances** - Create one `ZerobusSdk` per application and reuse for multiple streams
 2. **Always Close Streams** - Use `defer stream.Close()` to ensure all data is flushed
-3. **Tune Inflight Limits** - Adjust `MaxInflightRequests` based on memory and throughput needs
-4. **Enable Recovery** - Always set `Recovery: true` in production environments
-5. **Use Batch Ingestion** - For high throughput, ingest many records before calling `Flush()`
-6. **Monitor Errors** - Log and alert on non-retryable errors
-7. **Use Protocol Buffers for Production** - More efficient than JSON for high-volume scenarios
-8. **Secure Credentials** - Never hardcode secrets; use environment variables or secret managers
-9. **Test Recovery** - Simulate failures to verify your error handling logic
-10. **One Stream Per Goroutine** - Don't share streams across goroutines; create separate streams for concurrent ingestion
+3. **Choose the Right Ingestion Method**:
+   - Use `IngestRecordsOffset()` for high throughput batch ingestion
+   - Use `IngestRecordOffset()` when processing records individually
+   - Both return offsets directly; use `WaitForOffset()` to explicitly wait for acknowledgments
+   - The older `IngestRecord()` method is deprecated
+4. **Tune Inflight Limits** - Adjust `MaxInflightRequests` based on memory and throughput needs
+5. **Enable Recovery** - Always set `Recovery: true` in production environments
+6. **Use Batch Ingestion** - For high throughput, ingest many records before calling `Flush()`
+7. **Monitor Errors** - Log and alert on non-retryable errors
+8. **Use Protocol Buffers for Production** - More efficient than JSON for high-volume scenarios
+9. **Secure Credentials** - Never hardcode secrets; use environment variables or secret managers
+10. **Test Recovery** - Simulate failures to verify your error handling logic
+11. **One Stream Per Goroutine** - Don't share streams across goroutines; create separate streams for concurrent ingestion
+
+## Migration Guide
+
+### Migrating from IngestRecord (Deprecated) to IngestRecordOffset
+
+As of v0.2.0, the `IngestRecord()` method is deprecated in favor of the simpler `IngestRecordOffset()` method. Both APIs continue to work, but we recommend migrating to the new API.
+
+**Old API (Deprecated but still works):**
+```go
+// IngestRecord queues the record and returns a RecordAck wrapper
+ack, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Await() blocks until the server acknowledges the record
+offset, err := ack.Await()
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Ingested and acknowledged at offset %d", offset)
+```
+
+**New API (Recommended):**
+```go
+// Ingest and get offset directly
+offset, err := stream.IngestRecordOffset(`{"id": 1, "message": "Hello"}`)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Ingested at offset %d", offset)
+
+// Optionally wait for server acknowledgment
+if err := stream.WaitForOffset(offset); err != nil {
+    log.Fatal(err)
+}
+log.Printf("Record acknowledged at offset %d", offset)
+```
+
+**Why migrate?**
+- Simpler API with fewer lines of code
+- More idiomatic Go (direct return values)
+- Explicit control over when to wait for acknowledgments
+- No wrapper types to understand
+- Better performance (don't wait unless you need to)
+
+**Note:** `IngestRecordOffset()` returns immediately after queuing the record. Use `WaitForOffset()` to explicitly wait for server acknowledgment when needed. For concurrent ingestion, use goroutines:
+
+```go
+var wg sync.WaitGroup
+for i := 0; i < 100; i++ {
+    wg.Add(1)
+    go func(record string) {
+        defer wg.Done()
+        offset, err := stream.IngestRecordOffset(record)
+        if err != nil {
+            log.Printf("Failed: %v", err)
+            return
+        }
+        log.Printf("Ingested at offset %d", offset)
+    }(myRecord)
+}
+wg.Wait()
+```
 
 ## API Reference
 
@@ -662,18 +887,35 @@ Each example includes detailed comments and demonstrates best practices for prod
 
 Main entry point for the SDK.
 
-#### `NewZerobusSdk(zerobusEndpoint, unityCatalogURL string) (*ZerobusSdk, error)`
+**Constructor:**
+```go
+func NewZerobusSdk(zerobusEndpoint, unityCatalogURL string) (*ZerobusSdk, error)
+```
 
 Creates a new SDK instance.
 
-- `zerobusEndpoint`: Zerobus gRPC service endpoint
-- `unityCatalogURL`: Unity Catalog URL for OAuth token acquisition
+- `zerobusEndpoint` - Zerobus gRPC service endpoint
+- `unityCatalogURL` - Unity Catalog URL for OAuth token acquisition
 
-#### `CreateStream(tableProps TableProperties, clientID, clientSecret string, options *StreamConfigurationOptions) (*ZerobusStream, error)`
+**Methods:**
+
+```go
+func (sdk *ZerobusSdk) CreateStream(
+    tableProps TableProperties,
+    clientID, clientSecret string,
+    options *StreamConfigurationOptions,
+) (*ZerobusStream, error)
+```
 
 Creates a new ingestion stream with OAuth authentication.
 
-#### `CreateStreamWithHeadersProvider(tableProps TableProperties, headersProvider HeadersProvider, options *StreamConfigurationOptions) (*ZerobusStream, error)`
+```go
+func (sdk *ZerobusSdk) CreateStreamWithHeadersProvider(
+    tableProps TableProperties,
+    headersProvider HeadersProvider,
+    options *StreamConfigurationOptions,
+) (*ZerobusStream, error)
+```
 
 Creates a new ingestion stream with a custom headers provider for advanced authentication. Use this when you need custom authentication logic (e.g., custom token caching, or alternative auth providers).
 
@@ -687,7 +929,9 @@ stream, err := sdk.CreateStreamWithHeadersProvider(
 )
 ```
 
-#### `Free()`
+```go
+func (sdk *ZerobusSdk) Free()
+```
 
 Explicitly releases SDK resources. Called automatically by finalizer.
 
@@ -695,87 +939,226 @@ Explicitly releases SDK resources. Called automatically by finalizer.
 
 Represents an active bidirectional streaming connection.
 
-#### `IngestRecord(payload interface{}) (*RecordAck, error)`
+**Methods:**
 
-Ingests a record into the stream. **Blocks until the record is queued** (handles backpressure), then returns an acknowledgment handle for awaiting server confirmation. 
+```go
+func (st *ZerobusStream) IngestRecordOffset(payload interface{}) (int64, error)
+```
+
+Sends a record to the Zerobus server for ingestion. This method queues the record and returns an offset that identifies the record's position in the ingestion sequence. The offset can later be used to wait for server acknowledgment that the record has been durably written.
+
+**What happens:**
+1. Your record is queued for transmission to the server
+2. An offset (logical sequence number) is assigned to the record
+3. The offset is returned immediately - you don't need to wait for server acknowledgment
+4. Use `WaitForOffset()` when you need to confirm the server has durably stored the record
 
 Accepts either:
 - `string` for JSON-encoded records
 - `[]byte` for Protocol Buffer-encoded records
 
-Returns a `*RecordAck` that can be awaited to get the logical offset assigned to the record.
+**Example:**
+```go
+// Send record and get its offset
+offset, err := stream.IngestRecordOffset(`{"id": 1}`)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Record queued with offset %d", offset)
+
+// Later, wait for server confirmation
+if err := stream.WaitForOffset(offset); err != nil {
+    log.Fatal(err)
+}
+log.Println("Server confirmed record is durable")
+```
+
+```go
+func (st *ZerobusStream) IngestRecordsOffset(records []interface{}) (int64, error)
+```
+
+Sends multiple records to the server in a single batch operation. This is more efficient than sending records individually when you have many records to ingest. Returns one offset for the whole batch.
+
+**What happens:**
+1. All records in the batch are queued for transmission as a single unit
+2. The entire batch is assigned one offset
+3. That single offset is returned
+4. Use `WaitForOffset()` with that offset to confirm the entire batch is durable
+
+Accepts a slice where each element is either:
+- `string` for JSON-encoded records
+- `[]byte` for Protocol Buffer-encoded records
+
+All records in the batch must be of the same type. Returns one offset for the batch, or `-1` if the batch is empty.
+
+**Example:**
+```go
+// Send batch of records - the entire batch gets ONE offset
+records := []interface{}{
+    `{"id": 1, "value": "first"}`,
+    `{"id": 2, "value": "second"}`,
+    `{"id": 3, "value": "third"}`,
+}
+batchOffset, err := stream.IngestRecordsOffset(records)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Batch queued with offset %d", batchOffset)
+
+// Wait for server to acknowledge the entire batch
+if err := stream.WaitForOffset(batchOffset); err != nil {
+    log.Fatal(err)
+}
+log.Println("Entire batch confirmed by server")
+```
+
+```go
+func (st *ZerobusStream) WaitForOffset(offset int64) error
+```
+
+Waits for the server to acknowledge that a specific record has been durably written. This method blocks until the server confirms the record at the given offset is persisted, or returns an error if the record fails.
+
+**When to use:**
+- After sending critical records that must be confirmed before proceeding
+- To implement checkpoint-based processing (wait for batches at certain intervals)
+- When you need explicit confirmation before marking work as complete
+
+Unlike `Flush()` which waits for all pending records, this waits only for a specific offset, allowing more granular control.
+
+**Example:**
+```go
+// Send multiple records
+offset1, _ := stream.IngestRecordOffset(`{"id": 1}`)
+offset2, _ := stream.IngestRecordOffset(`{"id": 2}`)
+offset3, _ := stream.IngestRecordOffset(`{"id": 3}`)
+
+// Only wait for confirmation that record 3 is durable
+// (records 1 and 2 will also be durable since offsets are sequential)
+if err := stream.WaitForOffset(offset3); err != nil {
+    log.Printf("Record at offset %d failed: %v", offset3, err)
+}
+log.Println("All three records confirmed by server")
+```
+
+```go
+func (st *ZerobusStream) GetUnackedRecords() ([]interface{}, error)
+```
+
+Returns a snapshot of all records that have been sent to the server but not yet confirmed as durably written.
+
+**IMPORTANT:** This method should **only be called after the stream has closed or failed**. Calling it on an active stream will return an error.
+
+**What you get:**
+- A copy of all pending records still waiting for server acknowledgment
+- Empty slice if all records have been acknowledged
+- Each element is either `string` (JSON) or `[]byte` (protobuf)
+
+**When to use:**
+- After stream failure to retrieve unacknowledged records for retry
+- After `Close()` fails to see which records weren't durably written
+- For implementing custom retry logic after stream errors
+
+**Note:** This creates a memory snapshot of pending data. For large numbers of unacked records, this can temporarily increase memory usage.
+
+**Example:**
+```go
+// Try to close the stream
+if err := stream.Close(); err != nil {
+    // Stream failed to close, check for unacked records
+    unacked, err := stream.GetUnackedRecords()
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("%d records failed to be acknowledged", len(unacked))
+
+    // Retry with a new stream
+    for _, record := range unacked {
+        newStream.IngestRecordOffset(record)
+    }
+}
+```
+
+```go
+func (st *ZerobusStream) IngestRecord(payload interface{}) (*RecordAck, error)
+```
+
+**Deprecated:** Use `IngestRecordOffset()` instead for a simpler API.
+
+This method exists for backwards compatibility. It ingests a record and returns a `*RecordAck` that wraps the offset (available immediately).
 
 **Example:**
 ```go
 ack, err := stream.IngestRecord(`{"id": 1}`)
 if err != nil {
-    // Handle queueing errors
+    log.Fatal(err)
 }
-
-// Wait for server acknowledgment
-offset, err := ack.Await()
-if err != nil {
-    // Handle acknowledgment errors
-}
+offset, err := ack.Await()  // Returns immediately with cached offset
 ```
 
-**For non-blocking ingestion:**
 ```go
-go func() {
-    ack, _ := stream.IngestRecord(data)  // This goroutine blocks
-    offset, _ := ack.Await()
-    // Handle offset
-}()
+func (st *ZerobusStream) Flush() error
 ```
 
-#### `Flush() error`
+Waits for the server to acknowledge all records that have been sent. This ensures that all pending records are durably written before continuing. Blocks until all in-flight records receive confirmation from the server.
 
-Blocks until all pending records are acknowledged by the server.
-
-#### `Close() error`
-
-Gracefully closes the stream after flushing pending records.
-
-### `RecordAck`
-
-Represents a pending acknowledgment for an ingested record.
-
-#### `Await() (int64, error)`
-
-Blocks until the record is acknowledged by the server and returns the offset.
-Can only be called once - subsequent calls return the cached result.
+**When to use:**
+- Before closing a stream to ensure no data is lost
+- At checkpoints where you need to guarantee all previous records are durable
+- When you want to wait for everything, not just specific offsets
 
 **Example:**
 ```go
-ack, _ := stream.IngestRecord(data)
+// Send many records
+for i := 0; i < 1000; i++ {
+    stream.IngestRecordOffset(data)
+}
+
+// Wait for all of them to be confirmed
+if err := stream.Flush(); err != nil {
+    log.Fatal(err)
+}
+log.Println("All 1000 records confirmed by server")
+```
+
+```go
+func (st *ZerobusStream) Close() error
+```
+
+Gracefully shuts down the stream, first waiting for all pending records to be acknowledged, then releasing resources. Always call this when done with a stream to avoid data loss.
+
+**What happens:**
+1. Waits for all pending records to be acknowledged (like calling `Flush()`)
+2. Closes the connection to the server
+3. Frees SDK resources
+
+Always use `defer stream.Close()` to ensure cleanup even if errors occur.
+
+### `RecordAck` (Deprecated)
+
+**Deprecated:** This type is maintained for backwards compatibility only. Use `IngestRecordOffset()` instead of `IngestRecord()` to get the offset directly.
+
+Represents an acknowledgment for an ingested record. The offset is available immediately after ingestion.
+
+**Methods:**
+
+```go
+func (ack *RecordAck) Await() (int64, error)
+```
+
+Returns the offset for the ingested record. Returns immediately since the offset is already available.
+
+**Example:**
+```go
+ack, _ := stream.IngestRecord(data)  // Deprecated
 offset, err := ack.Await()
 if err != nil {
     log.Printf("Record failed: %v", err)
 }
 ```
 
-#### `TryGet() (int64, error, bool)`
-
-Non-blocking check for acknowledgment status.
-
-Returns:
-- `(offset, nil, true)` if acknowledgment is ready
-- `(0, nil, false)` if still pending
-- `(0, error, true)` if an error occurred
-
-**Example:**
+**Prefer the new API:**
 ```go
-ack, _ := stream.IngestRecord(data)
-// Do other work...
-if offset, err, ready := ack.TryGet(); ready {
-    if err != nil {
-        log.Printf("Record failed: %v", err)
-    } else {
-        log.Printf("Record acknowledged at offset %d", offset)
-    }
-} else {
-    log.Println("Still waiting for acknowledgment")
-}
+offset, err := stream.IngestRecordOffset(data)  // Recommended
 ```
 
 ### `HeadersProvider`
@@ -804,6 +1187,8 @@ func (p *CustomProvider) GetHeaders() (map[string]string, error) {
 
 ### `TableProperties`
 
+Configuration for the target table.
+
 ```go
 type TableProperties struct {
     TableName       string
@@ -811,11 +1196,16 @@ type TableProperties struct {
 }
 ```
 
+- `TableName` - Full table name (e.g., "catalog.schema.table")
+- `DescriptorProto` - Optional Protocol buffer descriptor loaded from generated files (required for Proto record type, nil for JSON)
+
 ### `StreamConfigurationOptions`
 
-See [Configuration Options](#configuration-options) for details.
+Stream behavior configuration. See [Configuration Options](#configuration-options) for details.
 
 ### `ZerobusError`
+
+Error type for all SDK operations.
 
 ```go
 type ZerobusError struct {
@@ -824,17 +1214,23 @@ type ZerobusError struct {
 }
 ```
 
-#### `Error() string`
+**Methods:**
+
+```go
+func (e *ZerobusError) Error() string
+```
 
 Returns the error message.
 
-#### `Retryable() bool`
+```go
+func (e *ZerobusError) Retryable() bool
+```
 
 Returns `true` if the error can be automatically recovered by the SDK.
 
 ## Building from Source
 
-This section is for contributors and those who need to build the SDK from source. If you just want to use the SDK, see [Getting Started](#getting-started) instead.
+This section is for contributors and those who need to build the SDK from source. If you just want to use the SDK, see [Installation](#installation) instead.
 
 ### Basic Build
 
@@ -870,6 +1266,7 @@ make lint
 
 #### Windows
 The build system automatically compiles Rust with the GNU toolchain (`x86_64-pc-windows-gnu`) for compatibility with Go's MinGW-based CGO. This ensures the MSVC and GNU ABIs don't conflict.
+
 #### Linux
 Standard GCC toolchain is used. Install build tools with:
 ```bash
@@ -883,9 +1280,9 @@ Uses the system Clang toolchain. Install with:
 xcode-select --install
 ```
 
-## Troubleshooting
+### Troubleshooting
 
-### Installing Rust
+**Installing Rust**
 
 If you need to install Rust, use the official installer:
 
@@ -904,7 +1301,48 @@ rustc --version
 cargo --version
 ```
 
-### Common Build Issues
+**Enabling Rust SDK Logs**
+
+The SDK includes detailed tracing from the underlying Rust core. You can enable these logs to debug issues or understand SDK behavior.
+
+**Set the `RUST_LOG` environment variable before running your Go application:**
+
+```bash
+# Show all logs at info level and above
+export RUST_LOG=info
+go run your_app.go
+
+# Show debug logs (more verbose)
+export RUST_LOG=debug
+
+# Show trace logs (very verbose, shows everything)
+export RUST_LOG=trace
+
+# Show only Zerobus SDK logs at debug level
+export RUST_LOG=databricks_zerobus_ingest_sdk=debug
+
+# Multiple targets with different levels
+export RUST_LOG=databricks_zerobus_ingest_sdk=debug,tokio=warn
+```
+
+**Example output with `RUST_LOG=debug`:**
+
+```
+2026-01-27T13:45:23.456Z DEBUG databricks_zerobus_ingest_sdk: Creating stream for table catalog.schema.table
+2026-01-27T13:45:23.567Z DEBUG databricks_zerobus_ingest_sdk: Ingesting record at offset_id=0 record_count=1
+2026-01-27T13:45:23.678Z DEBUG databricks_zerobus_ingest_sdk: Record at offset 0 acknowledged
+```
+
+**Log Levels:**
+- `error` - Only errors
+- `warn` - Warnings and errors
+- `info` - General information (recommended for production)
+- `debug` - Detailed debugging information
+- `trace` - Very verbose, includes all internal operations
+
+**Note:** Logs are written to stderr and will appear in your application's error output.
+
+**Common Build Issues**
 
 **"cargo not found"**
 - Ensure Rust is installed and `~/.cargo/bin` is in your PATH
@@ -933,6 +1371,16 @@ This is an open source project. We welcome contributions, feedback, and bug repo
 ## License
 
 This SDK is licensed under the Databricks License. See the [LICENSE](LICENSE) file for the full license text. The license is also available online at [https://www.databricks.com/legal/db-license](https://www.databricks.com/legal/db-license).
+
+## Requirements
+
+- **Go 1.21+**
+- **CGO enabled** (enabled by default)
+- **C compiler** (gcc or clang)
+- **Databricks** workspace with Zerobus access enabled
+- **OAuth 2.0** client credentials (client ID and secret)
+- **Unity Catalog** endpoint access
+- **TLS** - Uses native OS certificate store
 
 ---
 

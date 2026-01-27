@@ -28,8 +28,8 @@ func main() {
 
 	// Configure stream options (optional).
 	options := zerobus.DefaultStreamConfigurationOptions()
-	options.MaxInflightRequests = 50000         // Lower for this example.
-	options.RecordType = zerobus.RecordTypeJson // Use JSON instead of Proto.
+	options.MaxInflightRequests = 50000
+	options.RecordType = zerobus.RecordTypeJson
 
 	// Create stream.
 	stream, err := sdk.CreateStream(
@@ -47,6 +47,7 @@ func main() {
 	defer stream.Close()
 
 	log.Println("Ingesting records...")
+	var offsets []int64
 	for i := 0; i < 5; i++ {
 		// Change this string to match the schema of your table.
 		jsonRecord := `{
@@ -55,7 +56,7 @@ func main() {
             "humidity": 60
         }`
 
-		_, err = stream.IngestRecord(jsonRecord)
+		offset, err := stream.IngestRecordOffset(jsonRecord)
 		if err != nil {
 			log.Printf("Failed to ingest record %d: %v", i, err)
 			// Check if error is retryable.
@@ -65,13 +66,17 @@ func main() {
 			continue
 		}
 
-		log.Printf("Queued record %d (awaiting acknowledgment...)", i)
+		log.Printf("Ingested record %d at offset %d", i, offset)
+		offsets = append(offsets, offset)
 	}
 
-	// Flush to ensure all records are acknowledged.
-	log.Println("Flushing stream...")
-	if err := stream.Flush(); err != nil {
-		log.Fatalf("Failed to flush: %v", err)
+	// Wait for specific offsets to be acknowledged.
+	log.Println("Waiting for acknowledgments...")
+	for _, offset := range offsets {
+		if err := stream.WaitForOffset(offset); err != nil {
+			log.Fatalf("Failed to wait for offset %d: %v", offset, err)
+		}
+		log.Printf("Record at offset %d acknowledged", offset)
 	}
 
 	log.Println("All records successfully ingested and acknowledged!")

@@ -7,10 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
+use tracing_subscriber::{fmt, EnvFilter};
+extern crate libc;
 
 use async_trait::async_trait;
 use databricks_zerobus_ingest_sdk::databricks::zerobus::RecordType;
@@ -29,10 +30,26 @@ mod tests;
 static RUNTIME: Lazy<Runtime> =
     Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
 
-// Global acknowledgment registry
-static ACK_COUNTER: AtomicU64 = AtomicU64::new(1);
-static ACK_REGISTRY: Lazy<Mutex<HashMap<u64, JoinHandle<Result<i64, ZerobusError>>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+// Flag to track if logging has been initialized
+static LOGGING_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Initialize tracing subscriber for Rust logs
+/// Can be controlled via RUST_LOG environment variable
+/// Examples:
+///   RUST_LOG=info           - Show info and above
+///   RUST_LOG=debug          - Show debug and above
+///   RUST_LOG=trace          - Show all logs
+///   RUST_LOG=databricks_zerobus_ingest_sdk=debug - Show only SDK logs at debug level
+fn init_logging() {
+    if LOGGING_INITIALIZED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let _ = fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .try_init();
+}
 
 // Global cache for header keys to prevent memory leaks
 // Header keys are typically a small set of constant strings (e.g., "Authorization", "Content-Type")
@@ -75,6 +92,21 @@ pub struct CResult {
     pub is_retryable: bool,
 }
 
+/// Represents a single record (either Proto or JSON)
+#[repr(C)]
+pub struct CRecord {
+    pub is_json: bool,
+    pub data: *mut u8,
+    pub data_len: usize,
+}
+
+/// Represents an array of records
+#[repr(C)]
+pub struct CRecordArray {
+    pub records: *mut CRecord,
+    pub len: usize,
+}
+
 impl CResult {
     fn success() -> Self {
         CResult {
@@ -109,6 +141,10 @@ pub struct CStreamConfigurationOptions {
     pub server_lack_of_ack_timeout_ms: u64,
     pub flush_timeout_ms: u64,
     pub record_type: i32,
+    pub stream_paused_max_wait_time_ms: u64,
+    pub has_stream_paused_max_wait_time_ms: bool,
+    pub callback_max_wait_time_ms: u64,
+    pub has_callback_max_wait_time_ms: bool,
 }
 
 impl From<CStreamConfigurationOptions> for StreamConfigurationOptions {
@@ -126,6 +162,17 @@ impl From<CStreamConfigurationOptions> for StreamConfigurationOptions {
                 2 => RecordType::Json,
                 _ => RecordType::Unspecified,
             },
+            stream_paused_max_wait_time_ms: if c_opts.has_stream_paused_max_wait_time_ms {
+                Some(c_opts.stream_paused_max_wait_time_ms)
+            } else {
+                None
+            },
+            callback_max_wait_time_ms: if c_opts.has_callback_max_wait_time_ms {
+                Some(c_opts.callback_max_wait_time_ms)
+            } else {
+                None
+            },
+            ack_callback: None,
         }
     }
 }
@@ -175,7 +222,7 @@ pub extern "C" fn zerobus_free_headers(headers: CHeaders) {
                     let _ = CString::from_raw(header.value);
                 }
             }
-            let _ = Vec::from_raw_parts(headers.headers, headers.count, headers.count);
+            libc::free(headers.headers as *mut std::ffi::c_void);
         }
     }
     if !headers.error_message.is_null() {
@@ -336,6 +383,8 @@ pub extern "C" fn zerobus_sdk_new(
     unity_catalog_url: *const c_char,
     result: *mut CResult,
 ) -> *mut CZerobusSdk {
+    init_logging();
+
     let res = (|| -> Result<*mut CZerobusSdk, String> {
         let endpoint = unsafe { c_str_to_string(zerobus_endpoint).map_err(|e| e.to_string())? };
         let catalog_url = unsafe { c_str_to_string(unity_catalog_url).map_err(|e| e.to_string())? };
@@ -542,48 +591,41 @@ pub extern "C" fn zerobus_stream_free(stream: *mut CZerobusStream) {
 }
 
 /// Ingest a record (protobuf encoded)
-/// Returns an acknowledgment ID that can be awaited later
-/// Returns 0 on error
+/// Returns the offset directly
+/// Returns -1 on error
 #[no_mangle]
 pub extern "C" fn zerobus_stream_ingest_proto_record(
     stream: *mut CZerobusStream,
     data: *const u8,
     data_len: usize,
     result: *mut CResult,
-) -> u64 {
+) -> i64 {
     if data.is_null() {
         write_error_result(result, "Invalid data pointer", false);
-        return 0;
+        return -1;
     }
 
     let stream_ref = match validate_stream_ptr(stream) {
         Ok(s) => s,
         Err(msg) => {
             write_error_result(result, msg, false);
-            return 0;
+            return -1;
         }
     };
 
     let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
     let data_vec = data_slice.to_vec();
 
-    // Queue the record and get the acknowledgment future
-    let ack_future_res = RUNTIME.block_on(async {
+    // Queue the record and get the offset directly
+    let offset_res = RUNTIME.block_on(async {
         let payload = EncodedRecord::Proto(data_vec);
-        stream_ref.ingest_record(payload).await
+        stream_ref.ingest_record_offset(payload).await
     });
 
-    match ack_future_res {
-        Ok(ack_future) => {
-            // Spawn a task to await the acknowledgment
-            let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let handle = RUNTIME.spawn(ack_future);
-
-            // Store the handle
-            ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
-
+    match offset_res {
+        Ok(offset) => {
             write_success_result(result);
-            ack_id
+            offset
         }
         Err(err) => {
             if !result.is_null() {
@@ -591,25 +633,25 @@ pub extern "C" fn zerobus_stream_ingest_proto_record(
                     *result = CResult::error(err);
                 }
             }
-            0
+            -1
         }
     }
 }
 
 /// Ingest a JSON record
-/// Returns an acknowledgment ID that can be awaited later
-/// Returns 0 on error
+/// Returns the offset directly
+/// Returns -1 on error
 #[no_mangle]
 pub extern "C" fn zerobus_stream_ingest_json_record(
     stream: *mut CZerobusStream,
     json_data: *const c_char,
     result: *mut CResult,
-) -> u64 {
+) -> i64 {
     let stream_ref = match validate_stream_ptr(stream) {
         Ok(s) => s,
         Err(msg) => {
             write_error_result(result, msg, false);
-            return 0;
+            return -1;
         }
     };
 
@@ -617,27 +659,20 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
         Ok(s) => s,
         Err(e) => {
             write_error_result(result, e, false);
-            return 0;
+            return -1;
         }
     };
 
-    // Queue the record and get the acknowledgment future
-    let ack_future_res = RUNTIME.block_on(async {
+    // Queue the record and get the offset directly
+    let offset_res = RUNTIME.block_on(async {
         let payload = EncodedRecord::Json(json_str);
-        stream_ref.ingest_record(payload).await
+        stream_ref.ingest_record_offset(payload).await
     });
 
-    match ack_future_res {
-        Ok(ack_future) => {
-            // Spawn a task to await the acknowledgment
-            let ack_id = ACK_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let handle = RUNTIME.spawn(ack_future);
-
-            // Store the handle
-            ACK_REGISTRY.lock().unwrap().insert(ack_id, handle);
-
+    match offset_res {
+        Ok(offset) => {
             write_success_result(result);
-            ack_id
+            offset
         }
         Err(err) => {
             if !result.is_null() {
@@ -645,159 +680,180 @@ pub extern "C" fn zerobus_stream_ingest_json_record(
                     *result = CResult::error(err);
                 }
             }
-            0
-        }
-    }
-}
-
-/// Await an acknowledgment (BLOCKING)
-/// Returns the offset on success, or -1 on error
-#[no_mangle]
-pub extern "C" fn zerobus_stream_await_ack(ack_id: u64, result: *mut CResult) -> i64 {
-    // Remove the handle from the registry
-    let handle = {
-        let mut registry = ACK_REGISTRY.lock().unwrap();
-        registry.remove(&ack_id)
-    };
-
-    match handle {
-        Some(h) => {
-            // Wait for the acknowledgment
-            let res = RUNTIME.block_on(h);
-
-            match res {
-                Ok(Ok(offset)) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult::success();
-                        }
-                    }
-                    offset
-                }
-                Ok(Err(err)) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult::error(err);
-                        }
-                    }
-                    -1
-                }
-                Err(_) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult {
-                                success: false,
-                                error_message: CString::new("Task panicked").unwrap().into_raw(),
-                                is_retryable: false,
-                            };
-                        }
-                    }
-                    -1
-                }
-            }
-        }
-        None => {
-            if !result.is_null() {
-                unsafe {
-                    *result = CResult {
-                        success: false,
-                        error_message: CString::new("Invalid ack ID").unwrap().into_raw(),
-                        is_retryable: false,
-                    };
-                }
-            }
             -1
         }
     }
 }
 
-/// Try to get an acknowledgment without blocking
-/// Returns:
-///   offset >= 0: Acknowledgment ready with offset
-///   -1: Still pending (check is_ready)
-///   -2: Error occurred (check result)
+/// Ingest a batch of protobuf records
+/// Returns the offset of the last record in the batch, or -1 on error
+/// Returns -2 if batch is empty
 #[no_mangle]
-pub extern "C" fn zerobus_stream_try_get_ack(
-    ack_id: u64,
-    is_ready: *mut bool,
+pub extern "C" fn zerobus_stream_ingest_proto_records(
+    stream: *mut CZerobusStream,
+    records: *const *const u8,
+    record_lens: *const usize,
+    num_records: usize,
     result: *mut CResult,
 ) -> i64 {
-    let registry = ACK_REGISTRY.lock().unwrap();
+    if records.is_null() || record_lens.is_null() {
+        write_error_result(result, "Invalid records pointer", false);
+        return -1;
+    }
 
-    if let Some(handle) = registry.get(&ack_id) {
-        if handle.is_finished() {
-            drop(registry);
-            // Remove and get the result
-            let handle = ACK_REGISTRY.lock().unwrap().remove(&ack_id).unwrap();
-            let res = RUNTIME.block_on(handle);
+    if num_records == 0 {
+        write_success_result(result);
+        return -2; // Empty batch
+    }
 
-            if !is_ready.is_null() {
-                unsafe {
-                    *is_ready = true;
-                }
-            }
+    let stream_ref = match validate_stream_ptr(stream) {
+        Ok(s) => s,
+        Err(msg) => {
+            write_error_result(result, msg, false);
+            return -1;
+        }
+    };
 
-            match res {
-                Ok(Ok(offset)) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult::success();
-                        }
-                    }
-                    offset
-                }
-                Ok(Err(err)) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult::error(err);
-                        }
-                    }
-                    -2
-                }
-                Err(_) => {
-                    if !result.is_null() {
-                        unsafe {
-                            *result = CResult {
-                                success: false,
-                                error_message: CString::new("Task panicked").unwrap().into_raw(),
-                                is_retryable: false,
-                            };
-                        }
-                    }
-                    -2
-                }
-            }
-        } else {
-            // Still pending
-            if !is_ready.is_null() {
-                unsafe {
-                    *is_ready = false;
-                }
-            }
+    // Convert array of C pointers to Vec<Vec<u8>>
+    let records_vec: Vec<Vec<u8>> = unsafe {
+        let records_slice = std::slice::from_raw_parts(records, num_records);
+        let lens_slice = std::slice::from_raw_parts(record_lens, num_records);
+
+        records_slice
+            .iter()
+            .zip(lens_slice.iter())
+            .map(|(ptr, len)| {
+                let data_slice = std::slice::from_raw_parts(*ptr, *len);
+                data_slice.to_vec()
+            })
+            .collect()
+    };
+
+    // Queue the records and get the offset
+    let offset_res = RUNTIME.block_on(async {
+        let payloads: Vec<EncodedRecord> =
+            records_vec.into_iter().map(EncodedRecord::Proto).collect();
+        stream_ref.ingest_records_offset(payloads).await
+    });
+
+    match offset_res {
+        Ok(Some(offset)) => {
+            write_success_result(result);
+            offset
+        }
+        Ok(None) => {
+            write_success_result(result);
+            -2 // Empty batch
+        }
+        Err(err) => {
             if !result.is_null() {
                 unsafe {
-                    *result = CResult::success();
+                    *result = CResult::error(err);
                 }
             }
             -1
         }
-    } else {
-        // Invalid ID
-        if !is_ready.is_null() {
-            unsafe {
-                *is_ready = false;
-            }
+    }
+}
+
+/// Ingest a batch of JSON records
+/// Returns the offset of the last record in the batch, or -1 on error
+/// Returns -2 if batch is empty
+#[no_mangle]
+pub extern "C" fn zerobus_stream_ingest_json_records(
+    stream: *mut CZerobusStream,
+    json_records: *const *const c_char,
+    num_records: usize,
+    result: *mut CResult,
+) -> i64 {
+    if json_records.is_null() {
+        write_error_result(result, "Invalid records pointer", false);
+        return -1;
+    }
+
+    if num_records == 0 {
+        write_success_result(result);
+        return -2; // Empty batch
+    }
+
+    let stream_ref = match validate_stream_ptr(stream) {
+        Ok(s) => s,
+        Err(msg) => {
+            write_error_result(result, msg, false);
+            return -1;
         }
-        if !result.is_null() {
-            unsafe {
-                *result = CResult {
-                    success: false,
-                    error_message: CString::new("Invalid ack ID").unwrap().into_raw(),
-                    is_retryable: false,
-                };
-            }
+    };
+
+    // Convert array of C strings to Vec<String>
+    let json_vec: Result<Vec<String>, _> = unsafe {
+        let json_slice = std::slice::from_raw_parts(json_records, num_records);
+        json_slice.iter().map(|ptr| c_str_to_string(*ptr)).collect()
+    };
+
+    let json_vec = match json_vec {
+        Ok(v) => v,
+        Err(e) => {
+            write_error_result(result, e, false);
+            return -1;
         }
-        -2
+    };
+
+    // Queue the records and get the offset
+    let offset_res = RUNTIME.block_on(async {
+        let payloads: Vec<EncodedRecord> = json_vec.into_iter().map(EncodedRecord::Json).collect();
+        stream_ref.ingest_records_offset(payloads).await
+    });
+
+    match offset_res {
+        Ok(Some(offset)) => {
+            write_success_result(result);
+            offset
+        }
+        Ok(None) => {
+            write_success_result(result);
+            -2 // Empty batch
+        }
+        Err(err) => {
+            if !result.is_null() {
+                unsafe {
+                    *result = CResult::error(err);
+                }
+            }
+            -1
+        }
+    }
+}
+
+/// Wait for a specific offset to be acknowledged by the server
+#[no_mangle]
+pub extern "C" fn zerobus_stream_wait_for_offset(
+    stream: *mut CZerobusStream,
+    offset: i64,
+    result: *mut CResult,
+) -> bool {
+    let stream_ref = match validate_stream_ptr(stream) {
+        Ok(s) => s,
+        Err(msg) => {
+            write_error_result(result, msg, false);
+            return false;
+        }
+    };
+
+    let res = RUNTIME.block_on(async { stream_ref.wait_for_offset(offset).await });
+
+    match res {
+        Ok(()) => {
+            write_success_result(result);
+            true
+        }
+        Err(err) => {
+            if !result.is_null() {
+                unsafe {
+                    *result = CResult::error(err);
+                }
+            }
+            false
+        }
     }
 }
 
@@ -826,6 +882,98 @@ pub extern "C" fn zerobus_stream_flush(stream: *mut CZerobusStream, result: *mut
                 }
             }
             false
+        }
+    }
+}
+
+/// Get unacknowledged records from a closed stream
+/// Returns a CRecordArray that must be freed with zerobus_free_record_array
+#[no_mangle]
+pub extern "C" fn zerobus_stream_get_unacked_records(
+    stream: *mut CZerobusStream,
+    result: *mut CResult,
+) -> CRecordArray {
+    let stream_ref = match validate_stream_ptr(stream) {
+        Ok(s) => s,
+        Err(msg) => {
+            write_error_result(result, msg, false);
+            return CRecordArray {
+                records: ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let records_res = RUNTIME.block_on(async { stream_ref.get_unacked_records().await });
+
+    match records_res {
+        Ok(records_iter) => {
+            // Collect into Vec
+            let records_vec: Vec<EncodedRecord> = records_iter.collect();
+            let len = records_vec.len();
+
+            // Convert to CRecords
+            let mut c_records: Vec<CRecord> = records_vec
+                .into_iter()
+                .map(|record| match record {
+                    EncodedRecord::Proto(data) => {
+                        let data_len = data.len();
+                        let data_ptr = Box::into_raw(data.into_boxed_slice()) as *mut u8;
+                        CRecord {
+                            is_json: false,
+                            data: data_ptr,
+                            data_len,
+                        }
+                    }
+                    EncodedRecord::Json(json_str) => {
+                        let bytes = json_str.into_bytes();
+                        let data_len = bytes.len();
+                        let data_ptr = Box::into_raw(bytes.into_boxed_slice()) as *mut u8;
+                        CRecord {
+                            is_json: true,
+                            data: data_ptr,
+                            data_len,
+                        }
+                    }
+                })
+                .collect();
+
+            let records_ptr = c_records.as_mut_ptr();
+            std::mem::forget(c_records); // Don't drop, Go will call free
+
+            write_success_result(result);
+            CRecordArray {
+                records: records_ptr,
+                len,
+            }
+        }
+        Err(err) => {
+            if !result.is_null() {
+                unsafe {
+                    *result = CResult::error(err);
+                }
+            }
+            CRecordArray {
+                records: ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
+/// Free a CRecordArray returned by zerobus_stream_get_unacked_records
+#[no_mangle]
+pub extern "C" fn zerobus_free_record_array(array: CRecordArray) {
+    if array.records.is_null() || array.len == 0 {
+        return;
+    }
+
+    unsafe {
+        let records_vec = Vec::from_raw_parts(array.records, array.len, array.len);
+        for record in records_vec {
+            if !record.data.is_null() && record.data_len > 0 {
+                let _ = Vec::from_raw_parts(record.data, record.data_len, record.data_len);
+            }
         }
     }
 }
@@ -881,6 +1029,10 @@ pub extern "C" fn zerobus_get_default_config() -> CStreamConfigurationOptions {
         recovery_retries: default_opts.recovery_retries,
         server_lack_of_ack_timeout_ms: default_opts.server_lack_of_ack_timeout_ms,
         flush_timeout_ms: default_opts.flush_timeout_ms,
-        record_type: 1, // RecordType::Proto
+        record_type: 1,                            // RecordType::Proto
+        stream_paused_max_wait_time_ms: 0,         // Not used when has_ is false
+        has_stream_paused_max_wait_time_ms: false, // Default is None
+        callback_max_wait_time_ms: 0,              // Not used when has_ is false
+        has_callback_max_wait_time_ms: false,      // Default is None
     }
 }

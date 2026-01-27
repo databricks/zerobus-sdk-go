@@ -4,32 +4,49 @@ This directory contains examples demonstrating how to use the Zerobus Go SDK to 
 
 ## Available Examples
 
-### 1. JSON Example
-**Recommended for getting started** - A simpler example that uses JSON for data serialization.
+Examples are organized by data format (JSON vs Protocol Buffers) and ingestion pattern (single vs batch):
 
-- Location: `examples/basic_example_json/basic_json_usage.go`
+### JSON Examples
+**Recommended for getting started** - Simpler examples that use JSON for data serialization.
+
+#### Single Record Ingestion
+- Location: `examples/json/single/main.go`
+- Ingests records one at a time using `IngestRecordOffset()`
 - No schema generation required
 - Direct JSON string ingestion
-- Easier to understand and modify
 - Great for quick prototyping
 
-### 2. Protocol Buffers Example
-A more advanced example that uses Protocol Buffers for type-safe data serialization.
+#### Batch Ingestion
+- Location: `examples/json/batch/main.go`
+- Ingests multiple records at once using `IngestRecordsOffset()`
+- Optimized for high-throughput scenarios
+- Shows batch offset handling and waiting
 
-- Location: `examples/basic_example_proto/basic_proto_usage.go`
-- Requires protobuf schema generation
+### Protocol Buffers Examples
+More advanced examples that use Protocol Buffers for type-safe data serialization.
+
+#### Single Record Ingestion
+- Location: `examples/proto/single/main.go`
+- Ingests records one at a time with protobuf
 - Type-safe record creation
 - Better for production use cases
-- More efficient binary encoding
+
+#### Batch Ingestion
+- Location: `examples/proto/batch/main.go`
+- Ingests multiple protobuf records at once
+- Most efficient for high-volume scenarios
+- Combines type safety with batch performance
 
 ## Common Features
 
-Both examples demonstrate:
-- Creating a stream with OAuth authentication
-- Ingesting records asynchronously
-- Awaiting acknowledgments
-- Properly closing the stream
-- Configuring credentials and endpoints
+All examples demonstrate the complete ingestion workflow:
+
+1. **Creating a stream** - Establish a connection to the Zerobus server
+2. **Sending records** - Queue records for ingestion and receive offsets
+3. **Getting offsets** - Each record gets a logical sequence number (offset)
+4. **Waiting for acknowledgments** - Confirm the server has durably written specific records
+5. **Error handling** - Detect and handle failures during ingestion
+6. **Closing the stream** - Gracefully shut down and ensure all data is persisted
 
 ---
 
@@ -65,7 +82,7 @@ You'll need a Databricks service principal with OAuth credentials:
 
 ### 3. Configure Credentials
 
-Both examples require the same environment variables. You'll need to set these before running:
+All examples require the same environment variables. You'll need to set these before running:
 
 ```bash
 export ZEROBUS_SERVER_ENDPOINT="https://workspace-id.zerobus.region.cloud.databricks.com"
@@ -100,70 +117,43 @@ export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
 
 ---
 
-## Running the JSON Example
+## Running JSON Examples
 
-The JSON example is simpler and doesn't require schema generation.
+JSON examples are simpler and don't require schema generation.
 
-### Quick Start
+### Single Record Example
 
 ```bash
-# 1. Set credentials
+# Set credentials (same for all examples)
 export ZEROBUS_SERVER_ENDPOINT="https://workspace-id.zerobus.region.cloud.databricks.com"
 export DATABRICKS_WORKSPACE_URL="https://your-workspace.cloud.databricks.com"
 export DATABRICKS_CLIENT_ID="your-client-id"
 export DATABRICKS_CLIENT_SECRET="your-client-secret"
 export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
 
-# 2. Run the example
-cd examples/basic_example_json
-go run basic_json_usage.go
+# Run the example
+cd examples/json/single
+go run main.go
 ```
 
-### Expected Output
+Expected output shows 5 records ingested sequentially with offsets 0-4.
 
-```
-Ingesting records ...
-Queued record 0 (awaiting acknowledgment...)
-Queued record 1 (awaiting acknowledgment...)
-Queued record 2 (awaiting acknowledgment...)
-Queued record 3 (awaiting acknowledgment...)
-Queued record 4 (awaiting acknowledgment...)
-Flushing stream...
-All records successfully ingested and acknowledged!
+### Batch Example
+
+```bash
+# Set credentials (if not already set)
+# Run the batch example
+cd examples/json/batch
+go run main.go
 ```
 
-### Code Highlights
-
-The JSON example uses string-based JSON records:
-
-```go
-jsonRecord := `{
-    "device_name": "sensor-001",
-    "temp": 20,
-    "humidity": 60
-}`
-
-// Ingest asynchronously - returns immediately
-ack, err := stream.IngestRecord(jsonRecord)
-if err != nil {
-    log.Printf("Failed to ingest: %v", err)
-}
-
-// Await acknowledgment later
-offset, err := ack.Await()
-```
-
-Key features:
-- Set `RecordType = RecordTypeJson` in `StreamConfigurationOptions`
-- No descriptor file needed
-- Pass JSON strings directly to `IngestRecord()`
-- Records are queued immediately without blocking
+Expected output shows a batch of 5 records ingested at once, returning the last offset.
 
 ---
 
-## Running the Protocol Buffers Example
+## Running Protocol Buffers Examples
 
-The Protocol Buffers example provides type safety and better performance.
+Protocol Buffers examples provide type safety and better performance but require schema generation.
 
 ### Step 1: Install Protocol Buffer Compiler
 
@@ -178,93 +168,191 @@ brew install protobuf
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 ```
 
-### Step 2: Generate Go Code from Proto Schema
+### Step 2: Generate Go Code (if needed)
 
-The example includes `air_quality.proto`. Generate the Go code:
+The proto code is already generated, but if you need to regenerate:
 
 ```bash
-cd examples/basic_example_proto
+cd examples/proto
 ./generate_proto.sh
 ```
 
-This creates:
-- `pb/air_quality.pb.go` - Generated Go structs
-- File descriptor for the table schema
+This creates `pb/air_quality.pb.go` with generated Go structs.
 
-**Or generate manually:**
+### Step 3: Run Examples
+
+**Single Record Example:**
 ```bash
-mkdir -p pb
-protoc --go_out=. --go_opt=paths=source_relative air_quality.proto
+# Set credentials
+cd examples/proto/single
+go run main.go
 ```
 
-### Step 3: Set Credentials
-
+**Batch Example:**
 ```bash
-export ZEROBUS_SERVER_ENDPOINT="https://workspace-id.zerobus.region.cloud.databricks.com"
-export DATABRICKS_WORKSPACE_URL="https://your-workspace.cloud.databricks.com"
-export DATABRICKS_CLIENT_ID="your-client-id"
-export DATABRICKS_CLIENT_SECRET="your-client-secret"
-export ZEROBUS_TABLE_NAME="catalog.schema.air_quality"
+cd examples/proto/batch
+go run main.go
 ```
 
-### Step 4: Run the Example
+---
 
-```bash
-cd examples/basic_example_proto
-go run basic_proto_usage.go
-```
+## Key Differences Between Examples
 
-### Expected Output
+### Single vs Batch
+- **Single**: Call `IngestRecordOffset()` for each record individually
+- **Batch**: Call `IngestRecordsOffset()` with a slice of records for better throughput
 
-```
-Ingesting records ...
-Queued record 0 (temp=20, humidity=60)
-Queued record 1 (temp=21, humidity=61)
-...
-Flushing stream...
-All records successfully ingested!
-```
+### JSON vs Protocol Buffers
+| Feature | JSON | Protocol Buffers |
+|---------|------|------------------|
+| Setup | No schema generation needed | Requires protoc and code generation |
+| Type Safety | Runtime validation only | Compile-time type checking |
+| Performance | Text-based encoding | Efficient binary encoding |
+| Best For | Prototyping, simple use cases | Production, high-throughput |
 
-### Code Highlights
+---
 
-The Protocol Buffers example uses strongly-typed structs:
+## Code Pattern Comparison
 
+### Single Record Ingestion
+
+**JSON:**
 ```go
-import (
-    "google.golang.org/protobuf/proto"
-    "zerobus-examples/pb"
-)
+jsonRecord := `{"device_name": "sensor-001", "temp": 20, "humidity": 60}`
+offset, err := stream.IngestRecordOffset(jsonRecord)
+```
 
-// Create typed message
+**Protocol Buffers:**
+```go
 message := &pb.AirQuality{
     DeviceName: proto.String("sensor-001"),
-    Temp:       proto.Int32(25),
-    Humidity:   proto.Int64(65),
+    Temp:       proto.Int32(20),
+    Humidity:   proto.Int64(60),
 }
-
-// Marshal to bytes
-data, err := proto.Marshal(message)
-
-// Ingest asynchronously
-ack, err := stream.IngestRecord(data)
-
-// Await acknowledgment
-offset, err := ack.Await()
+data, _ := proto.Marshal(message)
+offset, err := stream.IngestRecordOffset(data)
 ```
 
-Key features:
-- Type-safe record creation with compile-time checks
-- Efficient binary encoding via Protocol Buffers
-- Requires descriptor file and generated Go structs
-- Set `RecordType = RecordTypeProto` (this is the default)
+### Batch Ingestion
+
+**JSON:**
+```go
+records := []interface{}{
+    `{"device_name": "sensor-001", "temp": 20, "humidity": 60}`,
+    `{"device_name": "sensor-002", "temp": 21, "humidity": 61}`,
+}
+batchOffset, err := stream.IngestRecordsOffset(records)
+```
+
+**Protocol Buffers:**
+```go
+var records []interface{}
+for i := 0; i < 5; i++ {
+    message := &pb.AirQuality{...}
+    data, _ := proto.Marshal(message)
+    records = append(records, data)
+}
+batchOffset, err := stream.IngestRecordsOffset(records)
+```
+
+---
+
+## Understanding Offsets and Acknowledgments
+
+The SDK uses a two-phase process for ingestion:
+
+### Phase 1: Send Records
+
+When you call `IngestRecordOffset()` or `IngestRecordsOffset()`:
+1. Your record is queued for transmission
+2. An offset (sequence number) is assigned
+3. The offset is returned
+4. The SDK transmits the record to the server in the background
+
+You don't wait for the server yet - you can continue sending more records or doing other work.
+
+### Phase 2: Wait for Acknowledgment (Blocking)
+
+When you call `WaitForOffset(offset)`:
+1. **Blocks** until the server confirms that record is durably written
+2. Returns `nil` on success
+3. Returns an error if the record fails
+
+This is optional - you only wait when you need confirmation.
+
+**Single record example:**
+```go
+// Phase 1: Send and get offset (returns immediately)
+offset, _ := stream.IngestRecordOffset(data)
+log.Printf("Record queued with offset %d", offset)
+
+// Do other work here if needed...
+
+// Phase 2: Wait for server confirmation (blocks until confirmed)
+if err := stream.WaitForOffset(offset); err != nil {
+    log.Printf("Record failed: %v", err)
+} else {
+    log.Println("Server confirmed record is durable")
+}
+```
+
+**Batch example:**
+```go
+// Phase 1: Send batch (returns immediately with one offset)
+batchOffset, _ := stream.IngestRecordsOffset(records)
+log.Printf("Batch queued with offset: %d", batchOffset)
+
+// Do other work here if needed...
+
+// Phase 2: Wait for confirmation (blocks until entire batch is confirmed)
+if err := stream.WaitForOffset(batchOffset); err != nil {
+    log.Printf("Batch failed: %v", err)
+} else {
+    log.Println("Entire batch confirmed by server")
+}
+```
+
+---
+
+## Retrieving Unacknowledged Records After Failure
+
+The `GetUnackedRecords()` method allows you to retrieve records that weren't acknowledged after a stream closes or fails. This is useful for implementing retry logic.
+
+**IMPORTANT:** `GetUnackedRecords()` can only be called after the stream has closed or failed. Calling it on an active stream will return an error.
+
+```go
+// Send records
+for i := 0; i < 100; i++ {
+    stream.IngestRecordOffset(data)
+}
+
+// Try to close the stream
+if err := stream.Close(); err != nil {
+    // Stream failed - check for unacknowledged records
+    unacked, err := stream.GetUnackedRecords()
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("%d records failed to be acknowledged", len(unacked))
+
+    // Retry with a new stream
+    newStream, _ := sdk.CreateStream(tableProps, clientID, clientSecret, options)
+    for _, record := range unacked {
+        newStream.IngestRecordOffset(record)
+    }
+    newStream.Close()
+}
+```
+
+This is useful for implementing custom retry logic and ensuring no data is lost after stream failures.
 
 ---
 
 ## Adapting for Your Custom Table
 
-### For JSON Example
+### For JSON Examples
 
-Simply modify the JSON string in `basic_json_usage.go` to match your table's schema:
+Simply modify the JSON string to match your table's schema:
 
 ```go
 jsonRecord := `{
@@ -274,278 +362,43 @@ jsonRecord := `{
 }`
 ```
 
-**Important:** Make sure the JSON fields match your table schema exactly, including:
-- Field names (case-sensitive)
-- Data types (STRING, INT, BIGINT, DOUBLE, BOOLEAN, TIMESTAMP, etc.)
+### For Protocol Buffers Examples
 
-No schema generation needed!
-
-### For Protocol Buffers Example
-
-To use your own custom table, you'll need to create a proto schema and generate Go code.
-
-**Step 1: Create Your Proto File**
-
-Create a `.proto` file matching your table schema (e.g., `my_table.proto`):
+Create a `.proto` file matching your table schema and regenerate code:
 
 ```protobuf
 syntax = "proto2";
-
 package examples;
-
-option go_package = "github.com/databricks/zerobus-sdk-go/examples/pb";
+option go_package = "zerobus-examples/pb";
 
 message MyTable {
     optional string field1 = 1;
     optional int32 field2 = 2;
-    optional int64 field3 = 3;
 }
 ```
 
-**Step 2: Generate Go Code**
-
-```bash
-protoc --go_out=. --go_opt=paths=source_relative my_table.proto
-```
-
-**Step 3: Update Your Code**
-
-```go
-import "zerobus-examples/pb"
-
-// Create message
-message := &pb.MyTable{
-    Field1: proto.String("value"),
-    Field2: proto.Int32(123),
-    Field3: proto.Int64(456),
-}
-
-// Marshal and ingest
-data, _ := proto.Marshal(message)
-ack, _ := stream.IngestRecord(data)
-```
-
----
-
-## Common Code Patterns
-
-Both examples follow the same general flow:
-
-### 1. Create SDK Instance
-
-```go
-sdk, err := zerobus.NewZerobusSdk(
-    zerobusEndpoint,
-    unityCatalogURL,
-)
-if err != nil {
-    log.Fatal(err)
-}
-defer sdk.Free()
-```
-
-### 2. Configure Stream Options
-
-**JSON Example:**
-```go
-options := zerobus.DefaultStreamConfigurationOptions()
-options.MaxInflightRequests = 50000
-options.RecordType = zerobus.RecordTypeJson  // Important!
-```
-
-**Protocol Buffers Example:**
-```go
-options := zerobus.DefaultStreamConfigurationOptions()
-options.RecordType = zerobus.RecordTypeProto  // This is the default
-```
-
-### 3. Create Stream
-
-```go
-stream, err := sdk.CreateStream(
-    zerobus.TableProperties{
-        TableName:       tableName,
-        DescriptorProto: descriptorBytes,  // nil for JSON
-    },
-    clientID,
-    clientSecret,
-    options,
-)
-if err != nil {
-    log.Fatal(err)
-}
-defer stream.Close()
-```
-
-### 4. Ingest Records Asynchronously
-
-**Fire off multiple records without waiting:**
-```go
-acks := make([]*zerobus.RecordAck, 0)
-
-for i := 0; i < 100; i++ {
-    ack, err := stream.IngestRecord(data)
-    if err != nil {
-        log.Printf("Failed: %v", err)
-        continue
-    }
-    acks = append(acks, ack)
-}
-```
-
-### 5. Await Acknowledgments
-
-**Option A: Await all**
-```go
-for i, ack := range acks {
-    offset, err := ack.Await()
-    if err != nil {
-        log.Printf("Record %d failed: %v", i, err)
-    }
-}
-```
-
-**Option B: Use Flush (waits for all pending)**
-```go
-if err := stream.Flush(); err != nil {
-    log.Fatal(err)
-}
-```
-
-### 6. Check Acknowledgment Status (Non-blocking)
-
-```go
-if offset, err, ready := ack.TryGet(); ready {
-    if err != nil {
-        log.Printf("Failed: %v", err)
-    } else {
-        log.Printf("Offset: %d", offset)
-    }
-} else {
-    log.Println("Still pending...")
-}
-```
+Then generate: `protoc --go_out=. --go_opt=paths=source_relative my_table.proto`
 
 ---
 
 ## Performance Tips
 
-### Concurrent Streams
-
-You can create multiple streams for parallel ingestion:
-
-```go
-var wg sync.WaitGroup
-for partition := 0; partition < 4; partition++ {
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-
-        stream, _ := sdk.CreateStream(tableProps, clientID, clientSecret, options)
-        defer stream.Close()
-
-        // Ingest records...
-    }()
-}
-wg.Wait()
-```
-
----
-
-## Choosing Between JSON and Protocol Buffers
-
-| Feature | JSON Example | Protocol Buffers Example |
-|---------|-------------|-------------------------|
-| **Setup Complexity** | Simple - no schema files | Requires protoc and code generation |
-| **Type Safety** | Runtime validation only | Compile-time type checking |
-| **Performance** | Text-based encoding | Efficient binary encoding |
-| **Flexibility** | Easy to modify on-the-fly | Requires regenerating code |
-| **Best For** | Prototyping, simple use cases | Production, high-throughput scenarios |
-| **Learning Curve** | Low | Moderate |
-
-**Recommendation:** Start with the JSON example for quick prototyping, then migrate to Protocol Buffers for production deployments where type safety and performance matter.
-
----
-
-## Troubleshooting
-
-### Error: "Failed to create SDK"
-
-**Possible causes:**
-- Invalid `ZEROBUS_SERVER_ENDPOINT` or `DATABRICKS_WORKSPACE_URL`
-- Network connectivity issues
-- Invalid endpoint URLs
-
-**Solution:** Verify your endpoint URLs are correct and accessible.
-
-### Error: "Failed to create stream"
-
-**Possible causes:**
-- Invalid OAuth credentials (client ID or secret)
-- Service principal lacks permissions on the table
-- Table doesn't exist
-- Wrong table name format
-
-**Solution:**
-1. Verify credentials are correct
-2. Check service principal has SELECT and MODIFY permissions
-3. Verify table exists: `SHOW TABLES IN catalog.schema`
-4. Use full three-part name: `catalog.schema.table`
-
-### Error: "Authentication failed" or "Invalid token"
-
-**Possible causes:**
-- OAuth credentials expired or invalid
-- Incorrect Unity Catalog endpoint
-- Service principal not properly configured
-
-**Solution:**
-1. Regenerate OAuth credentials in Databricks
-2. Verify `DATABRICKS_WORKSPACE_URL` is your Unity Catalog endpoint
-3. Ensure service principal has proper permissions
-
-### Error: Schema mismatch (Protocol Buffers)
-
-**Possible causes:**
-- Proto schema doesn't match table schema
-- Wrong descriptor file loaded
-- Field types don't match
-
-**Solution:**
-1. Verify proto fields match table columns exactly
-2. Check data type mappings (int32 → INT, int64 → BIGINT, etc.)
-3. Regenerate proto file if table schema changed
-
-### Error: JSON parsing errors (JSON example)
-
-**Possible causes:**
-- JSON structure doesn't match table schema
-- Invalid JSON syntax
-- Type mismatches (passing string instead of number)
-
-**Solution:**
-1. Verify JSON fields match table columns exactly (case-sensitive)
-2. Check JSON is valid: `echo '{"field": "value"}' | jq`
-3. Ensure data types match (numbers not quoted, strings quoted)
-
-### Warning: CGO compilation warnings
-
-If you see warnings like "implicit declaration of function", these are harmless CGO quirks and can be ignored. The SDK builds successfully despite these warnings.
+- Use **batch ingestion** for better throughput when ingesting many records
+- Create **multiple streams** for parallel ingestion across goroutines
+- Use **Protocol Buffers** for production scenarios with high volume
+- Start with **JSON single** for quick prototyping
 
 ---
 
 ## Next Steps
 
-- Try ingesting larger batches of records
-- Experiment with different `StreamConfigurationOptions`
-- Add error handling and retry logic for production use
-- Implement monitoring and metrics
-- Use the SDK in your application
+- Try modifying examples for your table schema
+- Experiment with different batch sizes
+- Test concurrent ingestion with multiple goroutines
+- Implement error handling and retry logic for production
 
 ## Additional Resources
 
 - [Main SDK Documentation](../README.md)
 - [API Reference](../README.md#api-reference)
-- [CHANGELOG](../CHANGELOG.md)
-- [Databricks Unity Catalog Documentation](https://docs.databricks.com/unity-catalog/index.html)
 - [Protocol Buffers Documentation](https://protobuf.dev/)

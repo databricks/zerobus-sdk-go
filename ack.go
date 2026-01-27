@@ -1,37 +1,44 @@
 package zerobus
 
-import (
-	"sync"
-)
+import "unsafe"
 
-// RecordAck represents a pending acknowledgment for an ingested record.
-// It allows ingestion with deferred acknowledgment handling.
+// RecordAck represents an acknowledgment for an ingested record.
+// Call Await() to wait for server acknowledgment of the record.
+//
+// Deprecated: This API is maintained for backwards compatibility.
+// Use IngestRecordOffset() instead for a simpler API that returns the offset directly.
 type RecordAck struct {
-	ackID  uint64
-	once   sync.Once
-	offset int64
-	err    error
+	streamPtr unsafe.Pointer
+	offset    int64
+	err       error
 }
 
-// Await blocks until the record is acknowledged by the server and returns the offset.
-// This method can only be called once. Subsequent calls return the cached result.
+// Await waits for the server to acknowledge the record at this offset.
+// This method blocks until the server confirms the record has been durably written.
+//
+// Deprecated: This API is maintained for backwards compatibility.
+// Use IngestRecordOffset() followed by stream.WaitForOffset() for more explicit control.
 //
 // Example:
 //
 //	ack, _ := stream.IngestRecord(data)
-//	// Do other work...
-//	offset, err := ack.Await()
+//	offset, err := ack.Await()  // Blocks until server acknowledges
 func (a *RecordAck) Await() (int64, error) {
-	a.once.Do(func() {
-		a.offset, a.err = streamAwaitAck(a.ackID)
-	})
-	return a.offset, a.err
+	if a.err != nil {
+		return -1, a.err
+	}
+
+	// Wait for server acknowledgment
+	err := streamWaitForOffset(a.streamPtr, a.offset)
+	if err != nil {
+		return -1, err
+	}
+
+	return a.offset, nil
 }
 
-// TryGet attempts to get the acknowledgment without blocking.
-// Returns (offset, nil, true) if the acknowledgment is ready.
-// Returns (0, nil, false) if still pending.
-// Returns (0, error, true) if there was an error.
-func (a *RecordAck) TryGet() (int64, error, bool) {
-	return streamTryGetAck(a.ackID)
+// Offset returns the offset for the ingested record without waiting for acknowledgment.
+// The offset is available immediately after the record is queued.
+func (a *RecordAck) Offset() (int64, error) {
+	return a.offset, a.err
 }
