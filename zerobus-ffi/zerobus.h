@@ -58,6 +58,10 @@ typedef struct CStreamConfigurationOptions {
   uint64_t server_lack_of_ack_timeout_ms;
   uint64_t flush_timeout_ms;
   int32_t record_type;
+  uint64_t stream_paused_max_wait_time_ms;
+  bool has_stream_paused_max_wait_time_ms;
+  uint64_t callback_max_wait_time_ms;
+  bool has_callback_max_wait_time_ms;
 } CStreamConfigurationOptions;
 
 /**
@@ -66,6 +70,23 @@ typedef struct CStreamConfigurationOptions {
  * The caller is responsible for freeing the returned CHeaders using zerobus_free_headers
  */
 typedef struct CHeaders (*HeadersProviderCallback)(void *user_data);
+
+/**
+ * Represents a single record (either Proto or JSON)
+ */
+typedef struct CRecord {
+  bool is_json;
+  uint8_t *data;
+  uintptr_t data_len;
+} CRecord;
+
+/**
+ * Represents an array of records
+ */
+typedef struct CRecordArray {
+  struct CRecord *records;
+  uintptr_t len;
+} CRecordArray;
 
 #ifdef __cplusplus
 extern "C" {
@@ -128,42 +149,67 @@ void zerobus_stream_free(struct CZerobusStream *stream);
 
 /**
  * Ingest a record (protobuf encoded)
- * Returns an acknowledgment ID that can be awaited later
- * Returns 0 on error
+ * Returns the offset directly
+ * Returns -1 on error
  */
-uint64_t zerobus_stream_ingest_proto_record(struct CZerobusStream *stream,
-                                            const uint8_t *data,
-                                            uintptr_t data_len,
-                                            struct CResult *result);
-
-/**
- * Ingest a JSON record
- * Returns an acknowledgment ID that can be awaited later
- * Returns 0 on error
- */
-uint64_t zerobus_stream_ingest_json_record(struct CZerobusStream *stream,
-                                           const char *json_data,
+int64_t zerobus_stream_ingest_proto_record(struct CZerobusStream *stream,
+                                           const uint8_t *data,
+                                           uintptr_t data_len,
                                            struct CResult *result);
 
 /**
- * Await an acknowledgment (BLOCKING)
- * Returns the offset on success, or -1 on error
+ * Ingest a JSON record
+ * Returns the offset directly
+ * Returns -1 on error
  */
-int64_t zerobus_stream_await_ack(uint64_t ack_id, struct CResult *result);
+int64_t zerobus_stream_ingest_json_record(struct CZerobusStream *stream,
+                                          const char *json_data,
+                                          struct CResult *result);
 
 /**
- * Try to get an acknowledgment without blocking
- * Returns:
- *   offset >= 0: Acknowledgment ready with offset
- *   -1: Still pending (check is_ready)
- *   -2: Error occurred (check result)
+ * Ingest a batch of protobuf records
+ * Returns the offset of the last record in the batch, or -1 on error
+ * Returns -2 if batch is empty
  */
-int64_t zerobus_stream_try_get_ack(uint64_t ack_id, bool *is_ready, struct CResult *result);
+int64_t zerobus_stream_ingest_proto_records(struct CZerobusStream *stream,
+                                            const uint8_t *const *records,
+                                            const uintptr_t *record_lens,
+                                            uintptr_t num_records,
+                                            struct CResult *result);
+
+/**
+ * Ingest a batch of JSON records
+ * Returns the offset of the last record in the batch, or -1 on error
+ * Returns -2 if batch is empty
+ */
+int64_t zerobus_stream_ingest_json_records(struct CZerobusStream *stream,
+                                           const char *const *json_records,
+                                           uintptr_t num_records,
+                                           struct CResult *result);
+
+/**
+ * Wait for a specific offset to be acknowledged by the server
+ */
+bool zerobus_stream_wait_for_offset(struct CZerobusStream *stream,
+                                    int64_t offset,
+                                    struct CResult *result);
 
 /**
  * Flush all pending records
  */
 bool zerobus_stream_flush(struct CZerobusStream *stream, struct CResult *result);
+
+/**
+ * Get unacknowledged records from a closed stream
+ * Returns a CRecordArray that must be freed with zerobus_free_record_array
+ */
+struct CRecordArray zerobus_stream_get_unacked_records(struct CZerobusStream *stream,
+                                                       struct CResult *result);
+
+/**
+ * Free a CRecordArray returned by zerobus_stream_get_unacked_records
+ */
+void zerobus_free_record_array(struct CRecordArray array);
 
 /**
  * Close the stream gracefully

@@ -29,8 +29,20 @@ jobs:
       - name: Test go build works (user step 2)
         run: go build -v
 
-      - name: Test example builds
-        working-directory: examples/basic_example_json
+      - name: Test JSON single example builds
+        working-directory: examples/json/single
+        run: go build -v
+
+      - name: Test JSON batch example builds
+        working-directory: examples/json/batch
+        run: go build -v
+
+      - name: Test Proto single example builds
+        working-directory: examples/proto/single
+        run: go build -v
+
+      - name: Test Proto batch example builds
+        working-directory: examples/proto/batch
         run: go build -v
 
   test-user-experience-windows:
@@ -60,8 +72,23 @@ jobs:
         run: go build -v
         shell: bash
 
-      - name: Test example builds
-        working-directory: examples/basic_example_json
+      - name: Test JSON single example builds
+        working-directory: examples/json/single
+        run: go build -v
+        shell: bash
+
+      - name: Test JSON batch example builds
+        working-directory: examples/json/batch
+        run: go build -v
+        shell: bash
+
+      - name: Test Proto single example builds
+        working-directory: examples/proto/single
+        run: go build -v
+        shell: bash
+
+      - name: Test Proto batch example builds
+        working-directory: examples/proto/batch
         run: go build -v
         shell: bash
 

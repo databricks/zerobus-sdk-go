@@ -24,6 +24,17 @@ typedef struct CResult {
     bool is_retryable;
 } CResult;
 
+typedef struct CRecord {
+    bool is_json;
+    uint8_t *data;
+    uintptr_t data_len;
+} CRecord;
+
+typedef struct CRecordArray {
+    CRecord *records;
+    uintptr_t len;
+} CRecordArray;
+
 // Define headers types for callback
 typedef struct CHeader {
     char *key;
@@ -48,6 +59,10 @@ typedef struct CStreamConfigurationOptions {
     uint64_t server_lack_of_ack_timeout_ms;
     uint64_t flush_timeout_ms;
     int32_t record_type;
+    uint64_t stream_paused_max_wait_time_ms;
+    bool has_stream_paused_max_wait_time_ms;
+    uint64_t callback_max_wait_time_ms;
+    bool has_callback_max_wait_time_ms;
 } CStreamConfigurationOptions;
 
 // Forward declare functions we need
@@ -74,15 +89,27 @@ extern CZerobusStream* zerobus_sdk_create_stream_with_headers_provider(
     const CStreamConfigurationOptions* options,
     CResult* result);
 extern void zerobus_stream_free(CZerobusStream* stream);
-extern uint64_t zerobus_stream_ingest_proto_record(CZerobusStream* stream,
-                                                     const uint8_t* data,
-                                                     uintptr_t data_len,
+extern int64_t zerobus_stream_ingest_proto_record(CZerobusStream* stream,
+                                                   const uint8_t* data,
+                                                   uintptr_t data_len,
+                                                   CResult* result);
+extern int64_t zerobus_stream_ingest_json_record(CZerobusStream* stream,
+                                                  const char* json_data,
+                                                  CResult* result);
+extern int64_t zerobus_stream_ingest_proto_records(CZerobusStream* stream,
+                                                     const uint8_t** records,
+                                                     const uintptr_t* record_lens,
+                                                     uintptr_t num_records,
                                                      CResult* result);
-extern uint64_t zerobus_stream_ingest_json_record(CZerobusStream* stream,
-                                                    const char* json_data,
+extern int64_t zerobus_stream_ingest_json_records(CZerobusStream* stream,
+                                                    const char** json_records,
+                                                    uintptr_t num_records,
                                                     CResult* result);
-extern int64_t zerobus_stream_await_ack(uint64_t ack_id, CResult* result);
-extern int64_t zerobus_stream_try_get_ack(uint64_t ack_id, bool* is_ready, CResult* result);
+extern bool zerobus_stream_wait_for_offset(CZerobusStream* stream,
+                                             int64_t offset,
+                                             CResult* result);
+extern CRecordArray zerobus_stream_get_unacked_records(CZerobusStream* stream, CResult* result);
+extern void zerobus_free_record_array(CRecordArray array);
 extern bool zerobus_stream_flush(CZerobusStream* stream, CResult* result);
 extern bool zerobus_stream_close(CZerobusStream* stream, CResult* result);
 extern void zerobus_free_error_message(char* error_message);
@@ -147,20 +174,79 @@ func ffiResult(cres C.CResult) error {
 }
 
 // convertConfigToC converts Go config to C config
+// Applies defaults for any zero-valued fields
 func convertConfigToC(opts *StreamConfigurationOptions) C.CStreamConfigurationOptions {
 	if opts == nil {
 		return C.zerobus_get_default_config()
 	}
 
+	// Start with defaults and override with provided values
+	defaults := DefaultStreamConfigurationOptions()
+
+	maxInflight := opts.MaxInflightRequests
+	if maxInflight == 0 {
+		maxInflight = defaults.MaxInflightRequests
+	}
+
+	recovery := opts.Recovery
+	// Note: Recovery is a bool, so we check if it was explicitly set to false
+	// by checking if ANY other field is non-zero (indicates intentional config)
+	// If all fields are default-like, we use the default Recovery value
+	if opts.RecoveryTimeoutMs == 0 && opts.RecoveryBackoffMs == 0 && opts.RecoveryRetries == 0 {
+		recovery = defaults.Recovery
+	}
+
+	recoveryTimeout := opts.RecoveryTimeoutMs
+	if recoveryTimeout == 0 {
+		recoveryTimeout = defaults.RecoveryTimeoutMs
+	}
+
+	recoveryBackoff := opts.RecoveryBackoffMs
+	if recoveryBackoff == 0 {
+		recoveryBackoff = defaults.RecoveryBackoffMs
+	}
+
+	recoveryRetries := opts.RecoveryRetries
+	if recoveryRetries == 0 {
+		recoveryRetries = defaults.RecoveryRetries
+	}
+
+	serverAckTimeout := opts.ServerLackOfAckTimeoutMs
+	if serverAckTimeout == 0 {
+		serverAckTimeout = defaults.ServerLackOfAckTimeoutMs
+	}
+
+	flushTimeout := opts.FlushTimeoutMs
+	if flushTimeout == 0 {
+		flushTimeout = defaults.FlushTimeoutMs
+	}
+
+	recordType := opts.RecordType
+	if recordType == RecordTypeUnspecified {
+		recordType = defaults.RecordType
+	}
+
+	// Handle optional StreamPausedMaxWaitTimeMs
+	var streamPausedMaxWaitMs C.uint64_t
+	hasStreamPausedMaxWait := C.bool(false)
+	if opts.StreamPausedMaxWaitTimeMs != nil {
+		streamPausedMaxWaitMs = C.uint64_t(*opts.StreamPausedMaxWaitTimeMs)
+		hasStreamPausedMaxWait = C.bool(true)
+	}
+
 	return C.CStreamConfigurationOptions{
-		max_inflight_requests:         C.size_t(opts.MaxInflightRequests),
-		recovery:                      C.bool(opts.Recovery),
-		recovery_timeout_ms:           C.uint64_t(opts.RecoveryTimeoutMs),
-		recovery_backoff_ms:           C.uint64_t(opts.RecoveryBackoffMs),
-		recovery_retries:              C.uint32_t(opts.RecoveryRetries),
-		server_lack_of_ack_timeout_ms: C.uint64_t(opts.ServerLackOfAckTimeoutMs),
-		flush_timeout_ms:              C.uint64_t(opts.FlushTimeoutMs),
-		record_type:                   C.int(opts.RecordType),
+		max_inflight_requests:              C.size_t(maxInflight),
+		recovery:                           C.bool(recovery),
+		recovery_timeout_ms:                C.uint64_t(recoveryTimeout),
+		recovery_backoff_ms:                C.uint64_t(recoveryBackoff),
+		recovery_retries:                   C.uint32_t(recoveryRetries),
+		server_lack_of_ack_timeout_ms:      C.uint64_t(serverAckTimeout),
+		flush_timeout_ms:                   C.uint64_t(flushTimeout),
+		record_type:                        C.int(recordType),
+		stream_paused_max_wait_time_ms:     streamPausedMaxWaitMs,
+		has_stream_paused_max_wait_time_ms: hasStreamPausedMaxWait,
+		callback_max_wait_time_ms:          0,
+		has_callback_max_wait_time_ms:      C.bool(false),
 	}
 }
 
@@ -356,55 +442,20 @@ func streamFree(ptr unsafe.Pointer) {
 }
 
 // streamIngestProtoRecord ingests a protobuf record
-// Returns an acknowledgment ID
-func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (uint64, error) {
+// Returns the offset directly
+func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (int64, error) {
 	if len(data) == 0 {
-		return 0, &ZerobusError{Message: "empty data", IsRetryable: false}
+		return -1, &ZerobusError{Message: "empty data", IsRetryable: false}
 	}
 
 	cData := (*C.uint8_t)(unsafe.Pointer(&data[0]))
 	dataLen := C.size_t(len(data))
 
 	var cres C.CResult
-	ackID := C.zerobus_stream_ingest_proto_record(
+	offset := C.zerobus_stream_ingest_proto_record(
 		(*C.CZerobusStream)(streamPtr),
 		cData,
 		dataLen,
-		&cres,
-	)
-
-	if ackID == 0 {
-		return 0, ffiResult(cres)
-	}
-
-	return uint64(ackID), nil
-}
-
-// streamIngestJSONRecord ingests a JSON record
-// Returns an acknowledgment ID
-func streamIngestJSONRecord(streamPtr unsafe.Pointer, jsonData string) (uint64, error) {
-	cJSON := C.CString(jsonData)
-	defer C.free(unsafe.Pointer(cJSON))
-
-	var cres C.CResult
-	ackID := C.zerobus_stream_ingest_json_record(
-		(*C.CZerobusStream)(streamPtr),
-		cJSON,
-		&cres,
-	)
-
-	if ackID == 0 {
-		return 0, ffiResult(cres)
-	}
-
-	return uint64(ackID), nil
-}
-
-// streamAwaitAck waits for an acknowledgment and returns the offset
-func streamAwaitAck(ackID uint64) (int64, error) {
-	var cres C.CResult
-	offset := C.zerobus_stream_await_ack(
-		C.uint64_t(ackID),
 		&cres,
 	)
 
@@ -415,29 +466,106 @@ func streamAwaitAck(ackID uint64) (int64, error) {
 	return int64(offset), nil
 }
 
-// streamTryGetAck tries to get an acknowledgment without blocking
-func streamTryGetAck(ackID uint64) (int64, error, bool) {
-	var cres C.CResult
-	var isReady C.bool
+// streamIngestJSONRecord ingests a JSON record
+// Returns the offset directly
+func streamIngestJSONRecord(streamPtr unsafe.Pointer, jsonData string) (int64, error) {
+	cJSON := C.CString(jsonData)
+	defer C.free(unsafe.Pointer(cJSON))
 
-	offset := C.zerobus_stream_try_get_ack(
-		C.uint64_t(ackID),
-		&isReady,
+	var cres C.CResult
+	offset := C.zerobus_stream_ingest_json_record(
+		(*C.CZerobusStream)(streamPtr),
+		cJSON,
 		&cres,
 	)
 
-	if offset == -1 {
-		// Still pending
-		return 0, nil, false
+	if offset < 0 {
+		return -1, ffiResult(cres)
 	}
+
+	return int64(offset), nil
+}
+
+// streamIngestProtoRecords ingests a batch of protobuf records
+func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64, error) {
+	if len(records) == 0 {
+		return -1, nil // Return special value for empty batch
+	}
+
+	// Create arrays of pointers and lengths
+	recordPtrs := make([]*C.uint8_t, len(records))
+	recordLens := make([]C.size_t, len(records))
+
+	for i, record := range records {
+		if len(record) > 0 {
+			recordPtrs[i] = (*C.uint8_t)(unsafe.Pointer(&record[0]))
+			recordLens[i] = C.size_t(len(record))
+		}
+	}
+
+	var cres C.CResult
+	offset := C.zerobus_stream_ingest_proto_records(
+		(*C.CZerobusStream)(streamPtr),
+		(**C.uint8_t)(unsafe.Pointer(&recordPtrs[0])),
+		(*C.size_t)(unsafe.Pointer(&recordLens[0])),
+		C.size_t(len(records)),
+		&cres,
+	)
 
 	if offset == -2 {
-		// Error occurred
-		return 0, ffiResult(cres), true
+		return -1, nil // Empty batch
+	}
+	if offset < 0 {
+		return -1, ffiResult(cres)
 	}
 
-	// Success
-	return int64(offset), nil, true
+	return int64(offset), nil
+}
+
+// streamIngestJSONRecords ingests a batch of JSON records
+func streamIngestJSONRecords(streamPtr unsafe.Pointer, records []string) (int64, error) {
+	if len(records) == 0 {
+		return -1, nil // Return special value for empty batch
+	}
+
+	// Create array of C strings
+	cStrings := make([]*C.char, len(records))
+	for i, record := range records {
+		cStrings[i] = C.CString(record)
+		defer C.free(unsafe.Pointer(cStrings[i]))
+	}
+
+	var cres C.CResult
+	offset := C.zerobus_stream_ingest_json_records(
+		(*C.CZerobusStream)(streamPtr),
+		(**C.char)(unsafe.Pointer(&cStrings[0])),
+		C.size_t(len(records)),
+		&cres,
+	)
+
+	if offset == -2 {
+		return -1, nil // Empty batch
+	}
+	if offset < 0 {
+		return -1, ffiResult(cres)
+	}
+
+	return int64(offset), nil
+}
+
+// streamWaitForOffset waits for a specific offset to be acknowledged
+func streamWaitForOffset(streamPtr unsafe.Pointer, offset int64) error {
+	var cres C.CResult
+	success := C.zerobus_stream_wait_for_offset(
+		(*C.CZerobusStream)(streamPtr),
+		C.int64_t(offset),
+		&cres,
+	)
+
+	if !success {
+		return ffiResult(cres)
+	}
+	return nil
 }
 
 // streamFlush flushes pending records
@@ -450,6 +578,54 @@ func streamFlush(streamPtr unsafe.Pointer) error {
 	}
 
 	return nil
+}
+
+// streamGetUnackedRecords retrieves all unacknowledged records
+func streamGetUnackedRecords(streamPtr unsafe.Pointer) ([]interface{}, error) {
+	var cres C.CResult
+	cArray := C.zerobus_stream_get_unacked_records(
+		(*C.CZerobusStream)(streamPtr),
+		&cres,
+	)
+
+	// Check if there was an error (null pointer indicates error)
+	if cArray.records == nil {
+		if cArray.len == 0 {
+			// Could be an error or empty - check result
+			err := ffiResult(cres)
+			if err != nil {
+				return nil, err
+			}
+			// Empty result, no error
+			return []interface{}{}, nil
+		}
+		return nil, ffiResult(cres)
+	}
+
+	// Convert C array to Go slice
+	if cArray.len == 0 {
+		return []interface{}{}, nil
+	}
+
+	records := make([]interface{}, cArray.len)
+	cRecords := unsafe.Slice(cArray.records, cArray.len)
+
+	for i, cRecord := range cRecords {
+		if cRecord.is_json {
+			// Convert C data to Go string for JSON
+			data := C.GoBytes(unsafe.Pointer(cRecord.data), C.int(cRecord.data_len))
+			records[i] = string(data)
+		} else {
+			// Convert C data to Go []byte for protobuf
+			data := C.GoBytes(unsafe.Pointer(cRecord.data), C.int(cRecord.data_len))
+			records[i] = data
+		}
+	}
+
+	// Free the C array memory
+	C.zerobus_free_record_array(cArray)
+
+	return records, nil
 }
 
 // streamClose closes the stream

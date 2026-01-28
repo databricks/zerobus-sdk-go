@@ -46,9 +46,7 @@ func main() {
 		log.Fatalf("Failed to marshal descriptor: %v", err)
 	}
 
-	// Configure stream for Protocol Buffers.
 	options := zerobus.DefaultStreamConfigurationOptions()
-	options.RecordType = zerobus.RecordTypeProto // Use Proto (this is the default)
 
 	// Create stream.
 	stream, err := sdk.CreateStream(
@@ -66,6 +64,7 @@ func main() {
 	defer stream.Close()
 
 	log.Println("Ingesting records...")
+	var offsets []int64
 	for i := 0; i < 5; i++ {
 		// Create a message using the generated struct.
 		// Change this message to match the schema of your table.
@@ -83,21 +82,25 @@ func main() {
 		}
 
 		// Ingest the record.
-		_, err = stream.IngestRecord(data)
+		offset, err := stream.IngestRecordOffset(data)
 		if err != nil {
 			log.Printf("Failed to ingest record %d: %v", i, err)
 			continue
 		}
 
-		log.Printf("Queued record %d (temp=%d, humidity=%d)",
-			i, *message.Temp, *message.Humidity)
+		log.Printf("Ingested record %d at offset %d (temp=%d, humidity=%d)",
+			i, offset, *message.Temp, *message.Humidity)
+		offsets = append(offsets, offset)
 	}
 
-	// Flush to ensure all records are acknowledged.
-	log.Println("Flushing stream...")
-	if err := stream.Flush(); err != nil {
-		log.Fatalf("Failed to flush: %v", err)
+	// Wait for specific offsets to be acknowledged.
+	log.Println("Waiting for acknowledgments...")
+	for _, offset := range offsets {
+		if err := stream.WaitForOffset(offset); err != nil {
+			log.Fatalf("Failed to wait for offset %d: %v", offset, err)
+		}
+		log.Printf("Record at offset %d acknowledged", offset)
 	}
 
-	log.Println("All records successfully ingested!")
+	log.Println("All records successfully ingested and acknowledged!")
 }

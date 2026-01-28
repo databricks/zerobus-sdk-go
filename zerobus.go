@@ -42,7 +42,14 @@
 //
 // # Ingesting Data
 //
-// JSON records:
+// Recommended API (direct offset return):
+//
+//	offset, err := stream.IngestRecordOffset(`{"id": 1, "message": "Hello"}`)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Legacy API (still supported but deprecated):
 //
 //	ack, err := stream.IngestRecord(`{"id": 1, "message": "Hello"}`)
 //	if err != nil {
@@ -53,8 +60,7 @@
 // Protocol Buffer records:
 //
 //	protoBytes, _ := proto.Marshal(myMessage)
-//	ack, err := stream.IngestRecord(protoBytes)
-//	offset, err := ack.Await()
+//	offset, err := stream.IngestRecordOffset(protoBytes)
 //
 // # Authentication
 //
@@ -97,17 +103,20 @@
 //
 // # Performance
 //
-// For high throughput, batch ingestion is recommended:
+// For high throughput, use goroutines for concurrent ingestion:
 //
-//	acks := make([]*zerobus.RecordAck, 0, 10000)
+//	var wg sync.WaitGroup
 //	for i := 0; i < 10000; i++ {
-//	    ack, _ := stream.IngestRecord(data)
-//	    acks = append(acks, ack)
+//	    wg.Add(1)
+//	    go func(data []byte) {
+//	        defer wg.Done()
+//	        offset, err := stream.IngestRecordOffset(data)
+//	        if err != nil {
+//	            log.Printf("Failed to ingest: %v", err)
+//	        }
+//	    }(dataToIngest)
 //	}
-//	// Wait for all acknowledgments
-//	for _, ack := range acks {
-//	    offset, _ := ack.Await()
-//	}
+//	wg.Wait()
 //
 // # Static Linking
 //
@@ -297,44 +306,46 @@ func (s *ZerobusSdk) CreateStreamWithHeadersProvider(
 	return stream, nil
 }
 
-// IngestRecord ingests a record into the stream.
-// This method blocks until the record is queued with an acknowledgment that can be awaited later.
+// IngestRecord ingests a record into the stream and returns an acknowledgment.
+// This method blocks until the record is queued and the offset is available.
+//
+// Deprecated: This API is maintained for backwards compatibility.
+// Use IngestRecordOffset() for a simpler API that returns the offset directly.
 //
 // The payload parameter accepts either:
 //   - []byte for Protocol Buffer encoded records
 //   - string for JSON encoded records
 //
 // Returns:
-//   - *RecordAck: An acknowledgment that can be awaited for the offset
-//   - error: Any error that occurred during queueing
+//   - *RecordAck: An acknowledgment containing the offset (available immediately)
+//   - error: Any error that occurred during ingestion
 //
 // The record type is automatically detected based on the payload type.
-// Records are acknowledged asynchronously by the server.
 //
 // Examples:
 //
-//	// Fire off multiple records without waiting
-//	ack1 := stream.IngestRecord(`{"field": "value1"}`)
-//	ack2 := stream.IngestRecord(`{"field": "value2"}`)
-//	ack3 := stream.IngestRecord(`{"field": "value3"}`)
+//	// Old API (still works but deprecated)
+//	ack, err := stream.IngestRecord(`{"field": "value1"}`)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	offset, err := ack.Await()
 //
-//	// Wait for acknowledgments
-//	offset1, err1 := ack1.Await()
-//	offset2, err2 := ack2.Await()
-//	offset3, err3 := ack3.Await()
+//	// Preferred: Use IngestRecordOffset instead
+//	offset, err := stream.IngestRecordOffset(`{"field": "value1"}`)
 func (st *ZerobusStream) IngestRecord(payload interface{}) (*RecordAck, error) {
 	if st.ptr == nil {
 		return nil, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
 	}
 
-	var ackID uint64
+	var offset int64
 	var err error
 
 	switch v := payload.(type) {
 	case []byte:
-		ackID, err = streamIngestProtoRecord(st.ptr, v)
+		offset, err = streamIngestProtoRecord(st.ptr, v)
 	case string:
-		ackID, err = streamIngestJSONRecord(st.ptr, v)
+		offset, err = streamIngestJSONRecord(st.ptr, v)
 	default:
 		return nil, &ZerobusError{
 			Message:     "Invalid payload type: must be []byte or string",
@@ -347,8 +358,198 @@ func (st *ZerobusStream) IngestRecord(payload interface{}) (*RecordAck, error) {
 	}
 
 	return &RecordAck{
-		ackID: ackID,
+		streamPtr: st.ptr,
+		offset:    offset,
+		err:       nil,
 	}, nil
+}
+
+// IngestRecordOffset ingests a record into the stream and returns the offset directly.
+// This is the preferred API for ingesting records.
+// This method blocks until the record is queued and returns the offset.
+//
+// The payload parameter accepts either:
+//   - []byte for Protocol Buffer encoded records
+//   - string for JSON encoded records
+//
+// Returns:
+//   - int64: The offset of the ingested record
+//   - error: Any error that occurred during ingestion
+//
+// The record type is automatically detected based on the payload type.
+//
+// Examples:
+//
+//	// Ingest records and get offsets directly
+//	offset1, err := stream.IngestRecordOffset(`{"field": "value1"}`)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// For concurrent ingestion, use goroutines
+//	go func() {
+//	    offset, err := stream.IngestRecordOffset(data)
+//	    // handle result
+//	}()
+func (st *ZerobusStream) IngestRecordOffset(payload interface{}) (int64, error) {
+	if st.ptr == nil {
+		return -1, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
+	}
+
+	var offset int64
+	var err error
+
+	switch v := payload.(type) {
+	case []byte:
+		offset, err = streamIngestProtoRecord(st.ptr, v)
+	case string:
+		offset, err = streamIngestJSONRecord(st.ptr, v)
+	default:
+		return -1, &ZerobusError{
+			Message:     "Invalid payload type: must be []byte or string",
+			IsRetryable: false,
+		}
+	}
+
+	if err != nil {
+		return -1, err
+	}
+
+	return offset, nil
+}
+
+// IngestRecordsOffset ingests a batch of records into the stream and returns one offset for the entire batch.
+// This is an optimized API for ingesting multiple records at once.
+// This method blocks until all records are queued and returns the batch offset.
+//
+// The records parameter accepts a slice where each element is either:
+//   - []byte for Protocol Buffer encoded records
+//   - string for JSON encoded records
+//
+// All records in the batch must be of the same type (all protobuf or all JSON).
+//
+// Returns:
+//   - int64: One offset that represents the entire batch
+//   - error: Any error that occurred during ingestion
+//
+// If the batch is empty, returns -1 with no error.
+//
+// Example:
+//
+//	// Ingest a batch of JSON records
+//	records := []interface{}{
+//	    `{"field": "value1"}`,
+//	    `{"field": "value2"}`,
+//	    `{"field": "value3"}`,
+//	}
+//	batchOffset, err := stream.IngestRecordsOffset(records)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	log.Printf("Batch ingested with offset: %d", batchOffset)
+func (st *ZerobusStream) IngestRecordsOffset(records []interface{}) (int64, error) {
+	if st.ptr == nil {
+		return -1, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
+	}
+
+	if len(records) == 0 {
+		return -1, nil
+	}
+
+	// Determine the type from the first record
+	switch records[0].(type) {
+	case []byte:
+		// Convert to [][]byte
+		byteRecords := make([][]byte, len(records))
+		for i, r := range records {
+			b, ok := r.([]byte)
+			if !ok {
+				return -1, &ZerobusError{
+					Message:     "All records in batch must be of the same type ([]byte)",
+					IsRetryable: false,
+				}
+			}
+			byteRecords[i] = b
+		}
+		return streamIngestProtoRecords(st.ptr, byteRecords)
+
+	case string:
+		// Convert to []string
+		stringRecords := make([]string, len(records))
+		for i, r := range records {
+			s, ok := r.(string)
+			if !ok {
+				return -1, &ZerobusError{
+					Message:     "All records in batch must be of the same type (string)",
+					IsRetryable: false,
+				}
+			}
+			stringRecords[i] = s
+		}
+		return streamIngestJSONRecords(st.ptr, stringRecords)
+
+	default:
+		return -1, &ZerobusError{
+			Message:     "Invalid payload type: must be []byte or string",
+			IsRetryable: false,
+		}
+	}
+}
+
+// WaitForOffset blocks until the server acknowledges the record at the specified offset.
+// This allows explicit control over when to wait for acknowledgments.
+//
+// Use this with offsets returned from IngestRecordOffset() to wait for specific records
+// to be durably written without waiting for all pending records (unlike Flush).
+//
+// Example:
+//
+//	offset, _ := stream.IngestRecordOffset(data)
+//	// Do other work...
+//	if err := stream.WaitForOffset(offset); err != nil {
+//	    log.Printf("Record at offset %d failed: %v", offset, err)
+//	}
+func (st *ZerobusStream) WaitForOffset(offset int64) error {
+	if st.ptr == nil {
+		return &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
+	}
+
+	return streamWaitForOffset(st.ptr, offset)
+}
+
+// GetUnackedRecords retrieves all records that have not yet been acknowledged by the server.
+//
+// IMPORTANT: This method should only be called AFTER the stream has closed or failed.
+// Calling it on an active stream will return an error.
+//
+// Use this method to:
+//   - Retrieve unacknowledged records after stream failure for retry logic
+//   - Check which records weren't durably written after Close() fails
+//   - Implement custom retry strategies after stream errors
+//
+// Returns a slice where each element is either:
+//   - []byte for Protocol Buffer encoded records
+//   - string for JSON encoded records
+//
+// Returns an empty slice if there are no unacknowledged records.
+//
+// Example:
+//
+//	if err := stream.Close(); err != nil {
+//	    // Stream failed, check for unacked records
+//	    unacked, err := stream.GetUnackedRecords()
+//	    if err != nil {
+//	        log.Fatal(err)
+//	    }
+//	    log.Printf("Failed to acknowledge %d records", len(unacked))
+//	    // Retry with a new stream
+//	}
+func (st *ZerobusStream) GetUnackedRecords() ([]interface{}, error) {
+	if st.ptr == nil {
+		return nil, &ZerobusError{Message: "Stream has been closed", IsRetryable: false}
+	}
+
+	return streamGetUnackedRecords(st.ptr)
 }
 
 // Flush blocks until all pending records have been acknowledged by the server.
@@ -390,9 +591,13 @@ func (st *ZerobusStream) Close() error {
 		return nil // Already closed
 	}
 
-	err := streamClose(st.ptr)
-	streamFree(st.ptr)
-	st.ptr = nil
+	// Always free resources, even if close fails
+	// The FFI layer now properly cleans up pending acks and aborts background tasks
+	ptr := st.ptr
+	st.ptr = nil // Mark as closed immediately to prevent double-close
+
+	err := streamClose(ptr)
+	streamFree(ptr) // Always free to prevent resource leaks
 
 	return err
 }

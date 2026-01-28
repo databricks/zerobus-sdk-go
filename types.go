@@ -45,6 +45,14 @@ type StreamConfigurationOptions struct {
 	// Type of record to ingest (Proto, Json, or Unspecified)
 	// Default: RecordTypeProto
 	RecordType RecordType
+
+	// Maximum time in milliseconds to wait during graceful stream close
+	// when server sends a CloseStreamSignal.
+	// - nil: Wait for the full server-specified duration (most graceful, default)
+	// - 0: Immediate recovery, close stream right away
+	// - x: Wait up to min(x, server_duration) milliseconds
+	// Default: nil (wait for full server duration)
+	StreamPausedMaxWaitTimeMs *uint64
 }
 
 // DefaultStreamConfigurationOptions returns the default configuration options

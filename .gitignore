@@ -9,5 +9,11 @@ libzerobus_ffi.a
 # Release artifacts
 releases/
 
+# Example binaries
+examples/json/single/json-single
+examples/json/batch/json-batch
+examples/proto/single/proto-single
+examples/proto/batch/proto-batch
+
 # OS files
 .DS_Store

@@ -177,6 +177,10 @@ mod tests {
             server_lack_of_ack_timeout_ms: 10000,
             flush_timeout_ms: 2000,
             record_type: 1, // Proto
+            stream_paused_max_wait_time_ms: 0,
+            has_stream_paused_max_wait_time_ms: false,
+            callback_max_wait_time_ms: 0,
+            has_callback_max_wait_time_ms: false,
         };
 
         let rust_config: StreamConfigurationOptions = c_config.into();
@@ -199,6 +203,10 @@ mod tests {
             server_lack_of_ack_timeout_ms: 0,
             flush_timeout_ms: 0,
             record_type: 2, // Json
+            stream_paused_max_wait_time_ms: 0,
+            has_stream_paused_max_wait_time_ms: false,
+            callback_max_wait_time_ms: 0,
+            has_callback_max_wait_time_ms: false,
         };
 
         let rust_config: StreamConfigurationOptions = c_config.into();
@@ -216,6 +224,10 @@ mod tests {
             server_lack_of_ack_timeout_ms: 0,
             flush_timeout_ms: 0,
             record_type: 999, // Invalid
+            stream_paused_max_wait_time_ms: 0,
+            has_stream_paused_max_wait_time_ms: false,
+            callback_max_wait_time_ms: 0,
+            has_callback_max_wait_time_ms: false,
         };
 
         let rust_config: StreamConfigurationOptions = c_config.into();

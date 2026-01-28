@@ -1,4 +1,4 @@
-module zerobus-examples
+module zerobus-examples/json-single
 
 go 1.25.3
 
@@ -7,4 +7,4 @@ require (
 )
 
 // Use local zerobus module
-replace github.com/databricks/zerobus-sdk-go => ../..
+replace github.com/databricks/zerobus-sdk-go => ../../..
