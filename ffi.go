@@ -235,18 +235,18 @@ func convertConfigToC(opts *StreamConfigurationOptions) C.CStreamConfigurationOp
 	}
 
 	return C.CStreamConfigurationOptions{
-		max_inflight_requests:                C.size_t(maxInflight),
-		recovery:                             C.bool(recovery),
-		recovery_timeout_ms:                  C.uint64_t(recoveryTimeout),
-		recovery_backoff_ms:                  C.uint64_t(recoveryBackoff),
-		recovery_retries:                     C.uint32_t(recoveryRetries),
-		server_lack_of_ack_timeout_ms:        C.uint64_t(serverAckTimeout),
-		flush_timeout_ms:                     C.uint64_t(flushTimeout),
-		record_type:                          C.int(recordType),
-		stream_paused_max_wait_time_ms:       streamPausedMaxWaitMs,
-		has_stream_paused_max_wait_time_ms:   hasStreamPausedMaxWait,
-		callback_max_wait_time_ms:            0,
-		has_callback_max_wait_time_ms:        C.bool(false),
+		max_inflight_requests:              C.size_t(maxInflight),
+		recovery:                           C.bool(recovery),
+		recovery_timeout_ms:                C.uint64_t(recoveryTimeout),
+		recovery_backoff_ms:                C.uint64_t(recoveryBackoff),
+		recovery_retries:                   C.uint32_t(recoveryRetries),
+		server_lack_of_ack_timeout_ms:      C.uint64_t(serverAckTimeout),
+		flush_timeout_ms:                   C.uint64_t(flushTimeout),
+		record_type:                        C.int(recordType),
+		stream_paused_max_wait_time_ms:     streamPausedMaxWaitMs,
+		has_stream_paused_max_wait_time_ms: hasStreamPausedMaxWait,
+		callback_max_wait_time_ms:          0,
+		has_callback_max_wait_time_ms:      C.bool(false),
 	}
 }
 

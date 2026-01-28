@@ -30,7 +30,7 @@ jobs:
         run: go build -v
 
       - name: Test example builds
-        working-directory: examples/basic_example_json
+        working-directory: examples/json/single
         run: go build -v
 
   test-user-experience-windows:
@@ -61,7 +61,7 @@ jobs:
         shell: bash
 
       - name: Test example builds
-        working-directory: examples/basic_example_json
+        working-directory: examples/json/single
         run: go build -v
         shell: bash
 
