@@ -14,9 +14,6 @@
 ### Internal Changes
 - Updated all SDK pointer validation to work with wrapper structure
 
-### Breaking Changes
-- **Minimum Go Version**: The minimum supported Go version has been increased from `1.21` to `1.24.0`. This is required by our core dependencies (specifically `grpc` and `protobuf` ecosystem).
-
 ## Release v0.2.0
 
 ### New Features and Improvements

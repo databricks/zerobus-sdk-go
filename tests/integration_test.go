@@ -1,11 +1,11 @@
-package zerobus
+package tests
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/databricks/zerobus-sdk-go/tests"
+	"github.com/databricks/zerobus-sdk-go"
 	"google.golang.org/grpc/codes"
 )
 
@@ -13,37 +13,37 @@ const testTableName = "test_catalog.test_schema.test_table"
 
 // TestSuccessfulStreamCreation tests that a stream can be created successfully
 func TestSuccessfulStreamCreation(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
 	// Inject responses before creating the stream
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
 	})
 
 	// Give the server time to be fully ready
 	time.Sleep(200 * time.Millisecond)
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -51,81 +51,81 @@ func TestSuccessfulStreamCreation(t *testing.T) {
 	}
 	defer stream.Close()
 
-	if stream.ptr == nil {
-		t.Fatal("Stream pointer is nil")
-	}
-
 	t.Log("✓ Stream created successfully")
 }
 
 // TestTimeoutedStreamCreation tests that stream creation times out when the server is slow
 func TestTimeoutedStreamCreation(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
 	// Inject a response with 300ms delay
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 300),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 300),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
 	// Set a timeout shorter than the response delay
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		RecoveryTimeoutMs:   100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	_, err = sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err == nil {
 		t.Fatal("Expected stream creation to fail due to timeout, but it succeeded")
 	}
+
+	// Give background tasks a moment to realize the timeout occurred
+	// before we stop the mock server in defer
+	time.Sleep(100 * time.Millisecond)
 }
 
 // TestNonRetriableErrorDuringStreamCreation tests that non-retriable errors fail immediately
 func TestNonRetriableErrorDuringStreamCreation(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.ErrorResponse(codes.Unauthenticated, "Non-retriable error", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		ErrorResponse(codes.Unauthenticated, "Non-retriable error", 0),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            true,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	_, err = sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err == nil {
@@ -135,35 +135,35 @@ func TestNonRetriableErrorDuringStreamCreation(t *testing.T) {
 
 // TestRetriableErrorWithoutRecoveryDuringStreamCreation tests that retriable errors fail without recovery
 func TestRetriableErrorWithoutRecoveryDuringStreamCreation(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.ErrorResponse(codes.Unavailable, "Retriable error", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		ErrorResponse(codes.Unavailable, "Retriable error", 0),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 		RecoveryTimeoutMs:   200,
 		RecoveryBackoffMs:   200,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	startTime := time.Now()
 	_, err = sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
@@ -181,34 +181,34 @@ func TestRetriableErrorWithoutRecoveryDuringStreamCreation(t *testing.T) {
 
 // TestGracefulClose tests that a stream can be closed gracefully
 func TestGracefulClose(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
-		tests.RecordAckResponse(0, 100),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
+		RecordAckResponse(0, 100),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -246,33 +246,33 @@ func TestGracefulClose(t *testing.T) {
 
 // TestIdempotentClose tests that close can be called multiple times
 func TestIdempotentClose(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -292,33 +292,33 @@ func TestIdempotentClose(t *testing.T) {
 
 // TestIngestAfterClose tests that ingesting after close returns an error
 func TestIngestAfterClose(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -338,36 +338,36 @@ func TestIngestAfterClose(t *testing.T) {
 
 // TestIngestSingleRecord tests ingesting a single record and receiving acknowledgment
 func TestIngestSingleRecord(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
-		tests.RecordAckResponse(0, 0), // Ack for offset 0
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
+		RecordAckResponse(0, 0), // Ack for offset 0
 	})
 
 	time.Sleep(200 * time.Millisecond)
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -406,38 +406,38 @@ func TestIngestSingleRecord(t *testing.T) {
 
 // TestIngestMultipleRecords tests ingesting multiple records and receiving acknowledgments
 func TestIngestMultipleRecords(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
-		tests.RecordAckResponse(0, 0), // Ack for offset 0
-		tests.RecordAckResponse(1, 0), // Ack for offset 1
-		tests.RecordAckResponse(2, 0), // Ack for offset 2
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
+		RecordAckResponse(0, 0), // Ack for offset 0
+		RecordAckResponse(1, 0), // Ack for offset 1
+		RecordAckResponse(2, 0), // Ack for offset 2
 	})
 
 	time.Sleep(200 * time.Millisecond)
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -481,36 +481,36 @@ func TestIngestMultipleRecords(t *testing.T) {
 
 // TestIngestBatchRecords tests ingesting a batch of records
 func TestIngestBatchRecords(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_1", 0),
-		tests.RecordAckResponse(0, 0), // Ack for the batch at offset 0
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_1", 0),
+		RecordAckResponse(0, 0), // Ack for the batch at offset 0
 	})
 
 	time.Sleep(200 * time.Millisecond)
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {
@@ -557,33 +557,33 @@ func TestIngestBatchRecords(t *testing.T) {
 
 // TestIngestRecordsAfterClose tests that batch ingesting after close returns an error
 func TestIngestRecordsAfterClose(t *testing.T) {
-	mockServer, serverURL, grpcServer, err := tests.StartMockServer()
+	mockServer, serverURL, grpcServer, err := StartMockServer()
 	if err != nil {
 		t.Fatalf("Failed to start mock server: %v", err)
 	}
 	defer grpcServer.Stop()
 
-	mockServer.InjectResponses(testTableName, []tests.MockResponse{
-		tests.CreateStreamResponse("test_stream_batch_after_close", 0),
+	mockServer.InjectResponses(testTableName, []MockResponse{
+		CreateStreamResponse("test_stream_batch_after_close", 0),
 	})
 
-	sdk, err := NewZerobusSdk(serverURL, "https://mock-uc.com")
+	sdk, err := zerobus.NewZerobusSdk(serverURL, "https://mock-uc.com")
 	if err != nil {
 		t.Fatalf("Failed to create SDK: %v", err)
 	}
 	defer sdk.Free()
 
-	tableProps := TableProperties{
+	tableProps := zerobus.TableProperties{
 		TableName:       testTableName,
-		DescriptorProto: tests.CreateTestDescriptorProto(),
+		DescriptorProto: CreateTestDescriptorProto(),
 	}
 
-	options := &StreamConfigurationOptions{
+	options := &zerobus.StreamConfigurationOptions{
 		MaxInflightRequests: 100,
 		Recovery:            false,
 	}
 
-	headersProvider := &tests.TestHeadersProvider{}
+	headersProvider := &TestHeadersProvider{}
 
 	stream, err := sdk.CreateStreamWithHeadersProvider(tableProps, headersProvider, options)
 	if err != nil {

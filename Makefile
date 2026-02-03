@@ -111,6 +111,7 @@ test-rust:
 test-go:
 	@echo "Running Go unit tests..."
 	go test -v -timeout 60s ./...
+	cd tests && go test -v -timeout 60s ./...
 	@echo "✓ All Go tests passed"
 
 examples: build
