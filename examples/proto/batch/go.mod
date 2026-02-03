@@ -1,10 +1,10 @@
 module zerobus-examples/proto-batch
 
-go 1.25.3
+go 1.24.0
 
 require (
 	github.com/databricks/zerobus-sdk-go v0.1.0
-	google.golang.org/protobuf v1.35.2
+	google.golang.org/protobuf v1.36.10
 	zerobus-examples v0.0.0
 )
 
