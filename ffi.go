@@ -359,6 +359,12 @@ func goGetHeaders(userData unsafe.Pointer, headers **C.CHeader, count *C.uintptr
 
 	// Allocate C array
 	cHeaders := C.malloc(C.size_t(len(headersMap)) * C.size_t(unsafe.Sizeof(C.CHeader{})))
+	if cHeaders == nil {
+		*errorMsg = C.CString("out of memory allocating headers")
+		*headers = nil
+		*count = 0
+		return
+	}
 	cHeadersSlice := (*[1 << 30]C.CHeader)(cHeaders)[:len(headersMap):len(headersMap)]
 
 	idx := 0
@@ -492,22 +498,35 @@ func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64
 		return -1, nil // Return special value for empty batch
 	}
 
-	// Create arrays of pointers and lengths
-	recordPtrs := make([]*C.uint8_t, len(records))
-	recordLens := make([]C.size_t, len(records))
+	// Allocate C memory for the arrays
+	recordPtrs := (**C.uint8_t)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(uintptr(0)))))
+	if recordPtrs == nil {
+		return -1, &ZerobusError{Message: "out of memory allocating record pointers", IsRetryable: false}
+	}
+	defer C.free(unsafe.Pointer(recordPtrs))
+
+	recordLens := (*C.size_t)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(C.size_t(0)))))
+	if recordLens == nil {
+		return -1, &ZerobusError{Message: "out of memory allocating record lengths", IsRetryable: false}
+	}
+	defer C.free(unsafe.Pointer(recordLens))
+
+	// Convert to slice for easier indexing
+	ptrSlice := unsafe.Slice(recordPtrs, len(records))
+	lenSlice := unsafe.Slice(recordLens, len(records))
 
 	for i, record := range records {
 		if len(record) > 0 {
-			recordPtrs[i] = (*C.uint8_t)(unsafe.Pointer(&record[0]))
-			recordLens[i] = C.size_t(len(record))
+			ptrSlice[i] = (*C.uint8_t)(unsafe.Pointer(&record[0]))
+			lenSlice[i] = C.size_t(len(record))
 		}
 	}
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_proto_records(
 		(*C.CZerobusStream)(streamPtr),
-		(**C.uint8_t)(unsafe.Pointer(&recordPtrs[0])),
-		(*C.size_t)(unsafe.Pointer(&recordLens[0])),
+		recordPtrs,
+		recordLens,
 		C.size_t(len(records)),
 		&cres,
 	)
@@ -528,17 +547,26 @@ func streamIngestJSONRecords(streamPtr unsafe.Pointer, records []string) (int64,
 		return -1, nil // Return special value for empty batch
 	}
 
-	// Create array of C strings
-	cStrings := make([]*C.char, len(records))
+	// Allocate C memory for the array of C string pointers
+	cStrings := (**C.char)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(uintptr(0)))))
+	if cStrings == nil {
+		return -1, &ZerobusError{Message: "out of memory allocating string pointers", IsRetryable: false}
+	}
+	defer C.free(unsafe.Pointer(cStrings))
+
+	// Convert to slice for easier indexing
+	strSlice := unsafe.Slice(cStrings, len(records))
+
+	// Convert each Go string to C string
 	for i, record := range records {
-		cStrings[i] = C.CString(record)
-		defer C.free(unsafe.Pointer(cStrings[i]))
+		strSlice[i] = C.CString(record)
+		defer C.free(unsafe.Pointer(strSlice[i]))
 	}
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_json_records(
 		(*C.CZerobusStream)(streamPtr),
-		(**C.char)(unsafe.Pointer(&cStrings[0])),
+		cStrings,
 		C.size_t(len(records)),
 		&cres,
 	)

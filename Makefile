@@ -109,8 +109,10 @@ test-rust:
 	cd zerobus-ffi && cargo test -- --test-threads=1
 
 test-go:
-	@echo "Running Go tests..."
-	go test -v
+	@echo "Running Go unit tests..."
+	go test -v -timeout 60s ./...
+	cd tests && go test -v -timeout 60s ./...
+	@echo "✓ All Go tests passed"
 
 examples: build
 	@echo "Building examples..."

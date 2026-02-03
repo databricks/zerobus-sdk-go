@@ -1,5 +1,19 @@
 # Version changelog
 
+## Release v0.2.1
+
+### Bug Fixes
+
+- **Critical**: Fixed CGO pointer violations in batch ingestion APIs that caused runtime panics with "cgo argument has Go pointer to unpinned Go pointer"
+  - Fixed `IngestRecordsOffset()` for both JSON and Protocol Buffer records
+  - Fixed by allocating pointer arrays in C memory instead of Go memory
+- Added NULL checks for all `malloc` calls to handle out-of-memory scenarios gracefully
+  - Added checks in batch ingestion functions
+  - Added checks in headers provider callback
+
+### Internal Changes
+- Updated all SDK pointer validation to work with wrapper structure
+
 ## Release v0.2.0
 
 ### New Features and Improvements
