@@ -15,7 +15,7 @@ import (
 // before building their application.
 
 func init() {
-	if skipLibCheck := os.GetEnv("ZEROBUS_SKIP_LIB_CHECK"); skipLibCheck == "1" {
+	if skipLibCheck := os.Getenv("ZEROBUS_SKIP_LIB_CHECK"); skipLibCheck == "1" {
 		return
 	}
 	
