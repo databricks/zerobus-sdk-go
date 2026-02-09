@@ -15,6 +15,10 @@ import (
 // before building their application.
 
 func init() {
+	if skipLibCheck := os.GetEnv("ZEROBUS_SKIP_LIB_CHECK"); skipLibCheck == "1" {
+		return
+	}
+	
 	// Check if library exists and provide helpful error if not
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
