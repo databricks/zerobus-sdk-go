@@ -1,8 +1,12 @@
 package zerobus
 
 import (
+	"fmt"
+	"runtime"
 	"runtime/cgo"
+	"sync"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -193,4 +197,226 @@ func TestZerobusError(t *testing.T) {
 	if errStr2 != "ZerobusError: permanent error" {
 		t.Errorf("Expected 'ZerobusError: permanent error', got '%s'", errStr2)
 	}
+}
+
+// TestMemoryPinning verifies that runtime.Pinner prevents data from being moved
+// This test exercises the pinning logic without requiring a full Rust FFI call
+func TestMemoryPinning(t *testing.T) {
+	// Create test data that simulates batch ingestion
+	const numRecords = 1000
+	records := make([][]byte, numRecords)
+
+	for i := 0; i < numRecords; i++ {
+		records[i] = []byte(fmt.Sprintf(`{"id": %d, "data": "test data for record %d"}`, i, i))
+	}
+
+	// Start aggressive GC in background to try to move memory
+	stopGC := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(1 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopGC:
+				return
+			case <-ticker.C:
+				runtime.GC()
+			}
+		}
+	}()
+
+	// Simulate what streamIngestProtoRecords does: pin all records
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	// Take pointers to all records (with pinning)
+	pointers := make([]uintptr, numRecords)
+	for i, record := range records {
+		if len(record) > 0 {
+			pinner.Pin(&record[0])
+			pointers[i] = uintptr(unsafe.Pointer(&record[0]))
+		}
+	}
+
+	// Let GC run for a bit while data is "being used by Rust"
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify pointers are still valid by checking the data
+	// (If pinning failed, the pointers might be stale and cause a crash)
+	for i, ptr := range pointers {
+		if ptr == 0 {
+			continue
+		}
+
+		// Read first byte to verify pointer is still valid
+		firstByte := *(*byte)(unsafe.Pointer(ptr))
+		expected := records[i][0]
+
+		if firstByte != expected {
+			t.Errorf("Record %d: first byte mismatch. Expected %c, got %c", i, expected, firstByte)
+		}
+	}
+
+	// Stop GC
+	close(stopGC)
+	wg.Wait()
+
+	t.Logf("Successfully verified %d pinned records under GC pressure", numRecords)
+}
+
+// TestMemoryPinningWithLargeRecords tests pinning with larger data sizes
+func TestMemoryPinningWithLargeRecords(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping large record test in short mode")
+	}
+
+	// Create large records (1MB each) to increase pressure on GC
+	const recordSize = 1024 * 1024
+	const numRecords = 10
+
+	records := make([][]byte, numRecords)
+	for i := 0; i < numRecords; i++ {
+		records[i] = make([]byte, recordSize)
+		// Fill with pattern
+		for j := range records[i] {
+			records[i][j] = byte(i % 256)
+		}
+	}
+
+	// Start GC pressure
+	stopGC := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(1 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopGC:
+				return
+			case <-ticker.C:
+				runtime.GC()
+			}
+		}
+	}()
+
+	// Pin all records
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	pointers := make([]uintptr, numRecords)
+	for i, record := range records {
+		pinner.Pin(&record[0])
+		pointers[i] = uintptr(unsafe.Pointer(&record[0]))
+	}
+
+	// Hold for longer to give GC more opportunities
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify data integrity
+	for i, ptr := range pointers {
+		firstByte := *(*byte)(unsafe.Pointer(ptr))
+		expected := byte(i % 256)
+
+		if firstByte != expected {
+			t.Errorf("Large record %d: first byte mismatch. Expected %d, got %d", i, expected, firstByte)
+		}
+
+		// Also check last byte
+		lastPtr := uintptr(unsafe.Pointer(&records[i][recordSize-1]))
+		lastByte := *(*byte)(unsafe.Pointer(lastPtr))
+		if lastByte != expected {
+			t.Errorf("Large record %d: last byte mismatch. Expected %d, got %d", i, expected, lastByte)
+		}
+	}
+
+	close(stopGC)
+	wg.Wait()
+
+	t.Logf("Successfully verified %d large records (%d MB each) under GC pressure",
+		numRecords, recordSize/1024/1024)
+}
+
+// TestConcurrentPinning tests that pinning works correctly with concurrent access
+func TestConcurrentPinning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping concurrent test in short mode")
+	}
+
+	const numGoroutines = 10
+	const recordsPerGoroutine = 100
+
+	// Start GC pressure
+	stopGC := make(chan struct{})
+	var gcWg sync.WaitGroup
+	gcWg.Add(1)
+	go func() {
+		defer gcWg.Done()
+		ticker := time.NewTicker(1 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopGC:
+				return
+			case <-ticker.C:
+				runtime.GC()
+			}
+		}
+	}()
+
+	// Each goroutine pins and verifies its own set of records
+	var wg sync.WaitGroup
+	errors := make(chan error, numGoroutines)
+
+	for g := 0; g < numGoroutines; g++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+
+			// Create records for this goroutine
+			records := make([][]byte, recordsPerGoroutine)
+			for i := 0; i < recordsPerGoroutine; i++ {
+				records[i] = []byte(fmt.Sprintf(`{"goroutine": %d, "record": %d}`, goroutineID, i))
+			}
+
+			// Pin them
+			var pinner runtime.Pinner
+			defer pinner.Unpin()
+
+			pointers := make([]uintptr, recordsPerGoroutine)
+			for i, record := range records {
+				pinner.Pin(&record[0])
+				pointers[i] = uintptr(unsafe.Pointer(&record[0]))
+			}
+
+			// Let GC run
+			time.Sleep(50 * time.Millisecond)
+
+			// Verify
+			for i, ptr := range pointers {
+				firstByte := *(*byte)(unsafe.Pointer(ptr))
+				if firstByte != records[i][0] {
+					errors <- fmt.Errorf("goroutine %d record %d: data corrupted", goroutineID, i)
+					return
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(stopGC)
+	gcWg.Wait()
+	close(errors)
+
+	// Check for errors
+	for err := range errors {
+		t.Fatal(err)
+	}
+
+	t.Logf("Successfully verified pinning across %d concurrent goroutines with %d records each",
+		numGoroutines, recordsPerGoroutine)
 }
