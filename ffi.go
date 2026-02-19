@@ -504,7 +504,6 @@ func streamIngestJSONRecord(streamPtr unsafe.Pointer, jsonData string) (int64, e
 }
 
 // streamIngestProtoRecords ingests a batch of protobuf records
-// Uses customer's proven approach with runtime.Pinner
 func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64, error) {
 	if len(records) == 0 {
 		return -1, nil // Return special value for empty batch
@@ -530,6 +529,8 @@ func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64
 	// Get pointers to the arrays for passing to C
 	inRecords := (**C.uint8_t)(unsafe.SliceData(recordPtrs))
 	inLengths := (*C.size_t)(unsafe.SliceData(recordLens))
+	pinner.Pin(inRecords)
+	pinner.Pin(inLengths)
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_proto_records(
@@ -551,7 +552,6 @@ func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64
 }
 
 // streamIngestJSONRecords ingests a batch of JSON records
-// Uses customer's proven approach with runtime.Pinner
 func streamIngestJSONRecords(streamPtr unsafe.Pointer, records []string) (int64, error) {
 	if len(records) == 0 {
 		return -1, nil // Return special value for empty batch
@@ -560,20 +560,19 @@ func streamIngestJSONRecords(streamPtr unsafe.Pointer, records []string) (int64,
 	// Create array of C string pointers
 	cStrings := make([]*C.char, len(records))
 
-	// Pin all C strings to prevent GC from moving them
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	// Convert each Go string to C string and pin it
+	// Convert each Go string to C string
 	for i, record := range records {
 		cStr := C.CString(record)
-		pinner.Pin(cStr)
 		cStrings[i] = cStr
 		defer C.free(unsafe.Pointer(cStr))
 	}
 
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
 	// Get pointer to the array for passing to C
 	inStrings := (**C.char)(unsafe.SliceData(cStrings))
+	pinner.Pin(inStrings)
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_json_records(
