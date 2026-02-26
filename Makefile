@@ -25,6 +25,7 @@ build: build-rust build-go
 
 build-rust:
 	@echo "Building Rust FFI layer..."
+	@ZEROBUS_BUILD_RUST=1
 	@# Detect OS and Arch for the target directory
 	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
 	ARCH=$$(uname -m); \
@@ -61,7 +62,7 @@ build-rust:
 
 build-go: build-rust
 	@echo "Building Go SDK..."
-	go build -tags build_rust -v
+	go build -v
 	@echo "✓ Go SDK built successfully"
 
 clean:
@@ -90,7 +91,7 @@ lint: lint-go lint-rust
 
 lint-go:
 	@echo "Linting Go code..."
-	go vet -tags build_rust ./...
+	go vet ./...
 	cd examples/json/single && go vet ./...
 	cd examples/json/batch && go vet ./...
 	cd examples/proto/single && go vet ./...
@@ -110,8 +111,8 @@ test-rust:
 
 test-go:
 	@echo "Running Go unit tests..."
-	go test -tags build_rust -v -timeout 60s ./...
-	cd tests && go test -tags build_rust -v -timeout 60s ./...
+	go test -v -timeout 60s ./...
+	cd tests && go test -v -timeout 60s ./...
 	@echo "✓ All Go tests passed"
 
 examples: build
