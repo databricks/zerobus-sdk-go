@@ -1,3 +1,5 @@
+//go:build build_rust
+
 package zerobus
 
 //go:generate bash build_rust.sh
