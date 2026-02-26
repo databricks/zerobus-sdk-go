@@ -15,6 +15,10 @@ import (
 // before building their application.
 
 func init() {
+	if _, exists := os.LookupEnv("ZEROBUS_BUILD_RUST"); !exists {
+		return
+	}
+
 	// Check if library exists and provide helpful error if not
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {

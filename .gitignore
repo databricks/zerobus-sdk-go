@@ -17,3 +17,6 @@ examples/proto/batch/proto-batch
 
 # OS files
 .DS_Store
+
+# IDE
+.idea

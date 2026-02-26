@@ -25,6 +25,7 @@ build: build-rust build-go
 
 build-rust:
 	@echo "Building Rust FFI layer..."
+	@ZEROBUS_BUILD_RUST=1
 	@# Detect OS and Arch for the target directory
 	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
 	ARCH=$$(uname -m); \
