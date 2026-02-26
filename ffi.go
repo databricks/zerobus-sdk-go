@@ -141,6 +141,7 @@ static HeadersProviderCallback getHeadersCallback() {
 */
 import "C"
 import (
+	"runtime"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -300,9 +301,12 @@ func sdkCreateStream(
 
 	var cDescriptor *C.uint8_t
 	var descriptorLen C.size_t
+	var pinner runtime.Pinner
 
 	if len(descriptorProto) > 0 {
-		cDescriptor = (*C.uint8_t)(unsafe.Pointer(&descriptorProto[0]))
+		defer pinner.Unpin()
+		cDescriptor = (*C.uint8_t)(unsafe.SliceData(descriptorProto))
+		pinner.Pin(cDescriptor)
 		descriptorLen = C.size_t(len(descriptorProto))
 	}
 
@@ -392,9 +396,12 @@ func sdkCreateStreamWithHeadersProvider(
 
 	var cDescriptor *C.uint8_t
 	var descriptorLen C.size_t
+	var pinner runtime.Pinner
 
 	if len(descriptorProto) > 0 {
-		cDescriptor = (*C.uint8_t)(unsafe.Pointer(&descriptorProto[0]))
+		defer pinner.Unpin()
+		cDescriptor = (*C.uint8_t)(unsafe.SliceData(descriptorProto))
+		pinner.Pin(cDescriptor)
 		descriptorLen = C.size_t(len(descriptorProto))
 	}
 
@@ -454,14 +461,18 @@ func streamIngestProtoRecord(streamPtr unsafe.Pointer, data []byte) (int64, erro
 		return -1, &ZerobusError{Message: "empty data", IsRetryable: false}
 	}
 
-	cData := (*C.uint8_t)(unsafe.Pointer(&data[0]))
-	dataLen := C.size_t(len(data))
+	// Pin the data to prevent GC from moving it while Rust reads it
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	cData := (*C.uint8_t)(unsafe.SliceData(data))
+	pinner.Pin(cData)
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_proto_record(
 		(*C.CZerobusStream)(streamPtr),
 		cData,
-		dataLen,
+		C.size_t(len(data)),
 		&cres,
 	)
 
@@ -498,35 +509,34 @@ func streamIngestProtoRecords(streamPtr unsafe.Pointer, records [][]byte) (int64
 		return -1, nil // Return special value for empty batch
 	}
 
-	// Allocate C memory for the arrays
-	recordPtrs := (**C.uint8_t)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(uintptr(0)))))
-	if recordPtrs == nil {
-		return -1, &ZerobusError{Message: "out of memory allocating record pointers", IsRetryable: false}
-	}
-	defer C.free(unsafe.Pointer(recordPtrs))
+	// Create arrays of pointers and lengths
+	recordPtrs := make([]*C.uint8_t, len(records))
+	recordLens := make([]C.size_t, len(records))
 
-	recordLens := (*C.size_t)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(C.size_t(0)))))
-	if recordLens == nil {
-		return -1, &ZerobusError{Message: "out of memory allocating record lengths", IsRetryable: false}
-	}
-	defer C.free(unsafe.Pointer(recordLens))
-
-	// Convert to slice for easier indexing
-	ptrSlice := unsafe.Slice(recordPtrs, len(records))
-	lenSlice := unsafe.Slice(recordLens, len(records))
+	// Pin all record data to prevent GC from moving it while Rust reads
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
 
 	for i, record := range records {
 		if len(record) > 0 {
-			ptrSlice[i] = (*C.uint8_t)(unsafe.Pointer(&record[0]))
-			lenSlice[i] = C.size_t(len(record))
+			unsafeRecord := (*C.uint8_t)(unsafe.SliceData(records[i]))
+			pinner.Pin(unsafeRecord)
+			recordPtrs[i] = unsafeRecord
+			recordLens[i] = C.size_t(len(record))
 		}
 	}
+
+	// Get pointers to the arrays for passing to C
+	inRecords := (**C.uint8_t)(unsafe.SliceData(recordPtrs))
+	inLengths := (*C.size_t)(unsafe.SliceData(recordLens))
+	pinner.Pin(inRecords)
+	pinner.Pin(inLengths)
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_proto_records(
 		(*C.CZerobusStream)(streamPtr),
-		recordPtrs,
-		recordLens,
+		inRecords,
+		inLengths,
 		C.size_t(len(records)),
 		&cres,
 	)
@@ -547,26 +557,27 @@ func streamIngestJSONRecords(streamPtr unsafe.Pointer, records []string) (int64,
 		return -1, nil // Return special value for empty batch
 	}
 
-	// Allocate C memory for the array of C string pointers
-	cStrings := (**C.char)(C.malloc(C.size_t(len(records)) * C.size_t(unsafe.Sizeof(uintptr(0)))))
-	if cStrings == nil {
-		return -1, &ZerobusError{Message: "out of memory allocating string pointers", IsRetryable: false}
-	}
-	defer C.free(unsafe.Pointer(cStrings))
-
-	// Convert to slice for easier indexing
-	strSlice := unsafe.Slice(cStrings, len(records))
+	// Create array of C string pointers
+	cStrings := make([]*C.char, len(records))
 
 	// Convert each Go string to C string
 	for i, record := range records {
-		strSlice[i] = C.CString(record)
-		defer C.free(unsafe.Pointer(strSlice[i]))
+		cStr := C.CString(record)
+		cStrings[i] = cStr
+		defer C.free(unsafe.Pointer(cStr))
 	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	// Get pointer to the array for passing to C
+	inStrings := (**C.char)(unsafe.SliceData(cStrings))
+	pinner.Pin(inStrings)
 
 	var cres C.CResult
 	offset := C.zerobus_stream_ingest_json_records(
 		(*C.CZerobusStream)(streamPtr),
-		cStrings,
+		inStrings,
 		C.size_t(len(records)),
 		&cres,
 	)
