@@ -1,5 +1,9 @@
 # Version changelog
 
+## Release v0.3.0
+
+Deprecates the [zerobus-sdk-go](https://github.com/databricks/zerobus-sdk-go) repo. The code has been ported to the [zerobus-sdk monorepo](https://github.com/databricks/zerobus-sdk) (Previously the Rust SDK repo).
+
 ## Release v0.2.1
 
 ### Bug Fixes
