@@ -4,6 +4,13 @@
 
 Deprecates the [zerobus-sdk-go](https://github.com/databricks/zerobus-sdk-go) repo. The code has been ported to the [zerobus-sdk monorepo](https://github.com/databricks/zerobus-sdk) (Previously the Rust SDK repo).
 
+### Bug Fixes
+Fixed memory safety issue where Go garbage collector could move data while Rust FFI was reading it, causing crashes:        
+  - Implemented proper memory pinning using `runtime.Pinner` in all FFI functions that pass Go slices to Rust
+  - Updated `streamIngestProtoRecords`, `streamIngestProtoRecord`, `streamIngestJSONRecords`, `sdkCreateStream`, and `sdkCreateStreamWithHeadersProvider`
+  - Uses `unsafe.SliceData()` for safe pointer conversion (requires Go 1.20+)
+  - Pins data before passing to Rust, ensuring pointers remain valid during FFI calls
+
 ## Release v0.2.1
 
 ### Bug Fixes
